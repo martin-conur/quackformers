@@ -3,9 +3,15 @@
 This repo is called **Quackformers**, a DuckDB extension for LLM-related tasks. For now, it embeds sentences using the following query:
 
 ```sql
+LOAD 'build/debug/quackformers.duckdb_extension';
 SELECT * FROM embed(prompt);
 ```
 
+**Note:** Before calling `embed(prompt)`, ensure that you have built the extension (see the [Building](#building) section) and are running DuckDB with the `-unsigned` flag:
+
+```shell
+duckdb -unsigned
+```
 
 Features:
 - No DuckDB build required
