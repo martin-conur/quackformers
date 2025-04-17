@@ -1,7 +1,11 @@
-# DuckDB Rust extension template
-This is an **experimental** template for Rust based extensions based on the C Extension API of DuckDB. The goal is to 
-turn this eventually into a stable basis for pure-Rust DuckDB extensions that can be submitted to the Community extensions
-repository
+# Quackformers: A DuckDB Extension for LLM-Related Functionality
+
+This repo is called **Quackformers**, a DuckDB extension for LLM-related tasks. For now, it embeds sentences using the following query:
+
+```sql
+SELECT * FROM embed(prompt);
+```
+
 
 Features:
 - No DuckDB build required
@@ -14,7 +18,7 @@ Features:
 Clone the repo with submodules
 
 ```shell
-git clone --recurse-submodules <repo>
+git clone --recurse-submodules git@github.com:martin-conur/quackformers.git
 ```
 
 ## Dependencies

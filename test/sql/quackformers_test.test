@@ -1,0 +1,15 @@
+# name: test/sql/quackformers.test
+# description: test quackformers extension
+# group: [quack]
+
+# Before we load the extension, this will fail
+statement error
+SELECT quackformers('Sam');
+----
+Catalog Error: Scalar Function with name quackformers does not exist!
+
+# Require statement will ensure the extension is loaded from now on
+require quackformers
+
+require icu
+

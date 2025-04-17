@@ -1,5 +1,5 @@
 [package]
-name = "rusty_quack"
+name = "quackformers"
 version = "0.1.0"
 edition = "2021"
 
@@ -15,11 +15,22 @@ strip = true
 # src/wasm_lib.rs forwards to src/lib.rs so that we can change from cdylib
 # (that is needed while compiling natively) to staticlib (needed since the
 # actual linking will be done via emcc
-name = "rusty_quack"
+name = "quackformers"
 path = "src/wasm_lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]
+accelerate-src = "0.3.2"
+anyhow = "1.0.98"
+candle-core = "0.8.4"
+candle-nn = "0.8.4"
+candle-transformers = "0.8.4"
 duckdb = { version = "1.2.1", features = ["vtab-loadable"] }
 duckdb-loadable-macros = "0.1.5"
+hf-hub = "0.4.2"
+intel-mkl-src = "0.8.1"
 libduckdb-sys = { version = "1.2.1", features = ["loadable-extension"] }
+serde_json = "1.0.140"
+tokenizers = "0.13.2"
+tracing-chrome = "0.7.2"
+tracing-subscriber = "0.3.19"

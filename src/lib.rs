@@ -15,6 +15,9 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+mod embed_utils;
+use embed_utils::embed;
+
 #[repr(C)]
 struct HelloBindData {
     name: String,
@@ -25,9 +28,9 @@ struct HelloInitData {
     done: AtomicBool,
 }
 
-struct HelloVTab;
+struct Embed;
 
-impl VTab for HelloVTab {
+impl VTab for Embed {
     type InitData = HelloInitData;
     type BindData = HelloBindData;
 
@@ -50,7 +53,8 @@ impl VTab for HelloVTab {
             output.set_len(0);
         } else {
             let vector = output.flat_vector(0);
-            let result = CString::new(format!("Rusty Quack {} 🐥", bind_data.name))?;
+            let embed_output = embed(bind_data.name.clone())?;
+            let result = CString::new(format!("{:?}", embed_output))?;
             vector.insert(0, result);
             output.set_len(1);
         }
@@ -62,11 +66,11 @@ impl VTab for HelloVTab {
     }
 }
 
-const EXTENSION_NAME: &str = env!("CARGO_PKG_NAME");
+const EXTENSION_NAME: &str = "embed";
 
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
-    con.register_table_function::<HelloVTab>(EXTENSION_NAME)
+    con.register_table_function::<Embed>(EXTENSION_NAME)
         .expect("Failed to register hello table function");
     Ok(())
 }
