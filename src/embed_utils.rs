@@ -1,15 +1,9 @@
-#[cfg(feature = "mkl")]
-extern crate intel_mkl_src;
-
-#[cfg(feature = "accelerate")]
-extern crate accelerate_src;
 use candle_transformers::models::bert::{BertModel, Config, HiddenAct, DTYPE};
-
-use anyhow::{Error as E, Result};
+use anyhow::{Error as E, Result}; // replace this to thiserror or custom error
 use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use hf_hub::{api::sync::Api, Repo, RepoType};
-use tokenizers::{PaddingParams, Tokenizer};
+use tokenizers::Tokenizer;
 
 fn build_model_and_tokenizer(model_id: Option<String>, approximate_gelu:bool) ->Result<(BertModel, Tokenizer)> {
     let device = Device::Cpu;
