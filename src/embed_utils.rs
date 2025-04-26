@@ -60,7 +60,7 @@ pub fn embed(prompt: String) -> Result<Vec<f32>> {
 
     let output_vec = mean_normalized.to_vec2::<f32>()?[0].clone();
 
-    Ok((output_vec))
+    Ok(output_vec)
 }
 
 fn normalize_l2(v: &Tensor) -> Result<Tensor> {
