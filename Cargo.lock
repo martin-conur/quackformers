@@ -1054,9 +1054,9 @@ dependencies = [
 
 [[package]]
 name = "duckdb"
-version = "1.2.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d8c35886fbb5356fe90c8a9b69da5623d509c32bdfb6eefa7f57081eb05f69b"
+checksum = "49ac283b6621e3becf8014d1efa655522794075834c72f744573debef9c9f6c8"
 dependencies = [
  "arrow",
  "cast",
@@ -1074,9 +1074,9 @@ dependencies = [
 
 [[package]]
 name = "duckdb-loadable-macros"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdcf66138edfb541e18c394a967ae466352e91c2b1de91160d6fdf20a66c2b58"
+checksum = "d8d71c319aba1460abe7e6496dcd1aba9d3635c12f337101ddddffd9db82332b"
 dependencies = [
  "darling 0.20.10",
  "proc-macro2",
@@ -2271,9 +2271,9 @@ checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
 
 [[package]]
 name = "libduckdb-sys"
-version = "1.2.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddeb5c68cb108d753a03613337f4bc9bed32281123d1f7884971f060f532fb6c"
+checksum = "12cac9d03484c43fefac8b2066a253c9b0b3b0cd02cbe02a9ea2312f7e382618"
 dependencies = [
  "autocfg",
  "flate2",
@@ -2960,7 +2960,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
