@@ -31,3 +31,4 @@ intel-mkl-src = "0.8.1"
 libduckdb-sys = { version = "1.2.1", features = ["loadable-extension"] }
 serde_json = "1.0.140"
 tokenizers = "0.13.2"
+openssl-sys = { version = "0.9", features = ["vendored"] }
