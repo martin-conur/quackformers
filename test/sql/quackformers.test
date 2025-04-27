@@ -4,12 +4,17 @@
 
 # Before we load the extension, this will fail
 statement error
-SELECT quackformers('Sam');
+SELECT embed('Sam');
 ----
-Catalog Error: Scalar Function with name quackformers does not exist!
+Catalog Error: Scalar Function with name embed does not exist!
 
 # Require statement will ensure the extension is loaded from now on
 require quackformers
 
 require icu
 
+# Confirm the extension works
+query I
+SELECT len(embed('this is a random sentence')::FLOAT[384]) ;
+----
+384

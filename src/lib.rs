@@ -3,74 +3,97 @@ extern crate duckdb_loadable_macros;
 extern crate libduckdb_sys;
 
 use duckdb::{
-    core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
-    vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
+    core::{DataChunkHandle, LogicalTypeId},
+    vscalar::{ScalarFunctionSignature, VScalar},
+    vtab::arrow::WritableVector,
     Connection, Result,
 };
 use duckdb_loadable_macros::duckdb_entrypoint_c_api;
-use libduckdb_sys as ffi;
-use std::{
-    error::Error,
-    ffi::CString,
-    sync::atomic::{AtomicBool, Ordering},
+use std::error::Error;
+use libduckdb_sys::{
+    duckdb_string_t,
+    duckdb_string_t_data,
+    duckdb_string_t_length,
 };
+use duckdb::core::Inserter;
+use duckdb::ffi;
+use std::slice;
 
 mod embed_utils;
 use embed_utils::embed;
+use embed_utils::EmbedError;
+use std::ffi::CString;
 
-#[repr(C)]
-struct HelloBindData {
-    name: String,
-}
-
-#[repr(C)]
-struct HelloInitData {
-    done: AtomicBool,
-}
-
-struct Embed;
-
-impl VTab for Embed {
-    type InitData = HelloInitData;
-    type BindData = HelloBindData;
-
-    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
-        bind.add_result_column("column0", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        let name = bind.get_parameter(0).to_string();
-        Ok(HelloBindData { name })
+fn duckdb_string_to_owned_string(word: &duckdb_string_t) -> String {
+    unsafe {
+        let len = duckdb_string_t_length(*word);
+        let c_ptr = duckdb_string_t_data(word as *const _ as *mut _);
+        let bytes = slice::from_raw_parts(c_ptr as *const u8, len as usize);
+        String::from_utf8_lossy(bytes).into_owned()
     }
+}
 
-    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
-        Ok(HelloInitData {
-            done: AtomicBool::new(false),
+fn process_strings(input_slice: &[duckdb_string_t]) -> Result<Vec<Vec<f32>>, EmbedError> {
+    input_slice
+        .iter()
+        .map(|word| {
+            let string = duckdb_string_to_owned_string(word);
+            embed(string)
         })
-    }
+        .collect()
+}
 
-    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
-        let init_data = func.get_init_data();
-        let bind_data = func.get_bind_data();
-        if init_data.done.swap(true, Ordering::Relaxed) {
-            output.set_len(0);
-        } else {
-            let vector = output.flat_vector(0);
-            let embed_output = embed(bind_data.name.clone())?;
-            let result = CString::new(format!("{:?}", embed_output))?;
-            vector.insert(0, result);
-            output.set_len(1);
+struct EmbedFunc; 
+
+impl VScalar for EmbedFunc {
+    type State = ();
+
+    /// # Safety
+    /// This function is called by DuckDB when executing the UDF (user-defined function).
+    /// - `input` must be a valid and initialized DataChunkHandle.
+    /// - `output` must be a valid and writable WritableVector.
+    /// - Caller (DuckDB) must guarantee input and output are valid for the duration of the call.
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        // Extract the input word
+        let input_vec = input.flat_vector(0);
+        // slice of strings
+        let input_slice = input_vec.as_slice_with_len::<duckdb_string_t>(input.len());
+
+        let output_flat_vector = output.flat_vector();
+
+        // Bert embed
+        let embedded_phrases = process_strings(input_slice)?;
+
+
+        for (i, embedded_phrase) in embedded_phrases.iter().enumerate() {
+            let embedded_phrase_string = CString::new(format!("{:?}", embedded_phrase))?;
+            output_flat_vector.insert(i, embedded_phrase_string);
         }
+
         Ok(())
     }
 
-    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
-        Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![LogicalTypeId::Varchar.into()],
+            LogicalTypeId::Varchar.into(),
+        )]
     }
 }
 
-const EXTENSION_NAME: &str = "embed";
+const FUNCTION_NAME: &str = "embed";
 
-#[duckdb_entrypoint_c_api()]
+#[duckdb_entrypoint_c_api]
+/// # Safety
+/// This function must only be called by DuckDB's extension loader system.
+/// The `Connection` must be a valid and open DuckDB connection provided by DuckDB.
+/// Caller must guarantee that DuckDB is properly initialized and not in an error state.
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
-    con.register_table_function::<Embed>(EXTENSION_NAME)
-        .expect("Failed to register hello table function");
+    con.register_scalar_function::<EmbedFunc>(FUNCTION_NAME)
+        .expect("Failed to register quackformers()");
     Ok(())
 }

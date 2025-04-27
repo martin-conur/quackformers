@@ -1,10 +1,34 @@
 # Quackformers: A DuckDB Extension for LLM-Related Functionality
 
-This repo is called **Quackformers**, a DuckDB extension for LLM-related tasks. For now, it embeds sentences using the following query:
+**Quackformers**, a DuckDB extension for LLM-related tasks. For now, it embeds sentences using the following query:
 
 ```sql
 LOAD 'build/debug/quackformers.duckdb_extension';
-SELECT * FROM embed(prompt);
+CREATE TEMP TABLE QUESTIONS(random_questions) AS
+VALUES
+    ('What is the capital of France?'),
+    ('How does a car engine work?'),
+    ('What is the tallest mountain in the world?'),
+    ('How do airplanes stay in the air?'),
+    ('What is the speed of light?'),
+    ('Who wrote "To Kill a Mockingbird"?'),
+    ('What is the chemical formula for water?'),
+    ('How do I bake a chocolate cake?'),
+    ('What is the population of Japan?'),
+    ('How does photosynthesis work?'),
+    ('What is the currency of Brazil?'),
+    ('Who painted the Mona Lisa?'),
+    ('What is the boiling point of water?'),
+    ('How do I play the guitar?'),
+    ('What is the largest ocean on Earth?'),
+    ('Who discovered gravity?'),
+    ('What is the process of making glass?'),
+    ('How do I learn a new language?'),
+    ('What is the history of the internet?'),
+    ('How does a computer processor work?')
+;
+
+SELECT embed(RANDOM_QUESTIONS)::FLOAT[384] embedded_questions FROM QUESTIONS;
 ```
 
 **Note:** Before calling `embed(prompt)`, ensure that you have built the extension (see the [Building](#building) section) and are running DuckDB with the `-unsigned` flag:
@@ -101,3 +125,18 @@ with the following error on extension load:
 IO Error: Extension '<name>.duckdb_extension' could not be loaded: The specified module could not be found
 ```
 This was resolved by using python 3.12
+
+## Roadmap
+
+Here are the planned features and improvements for **Quackformers**:
+
+1. **Faster Embedding Implementation**  
+   - Currently, embeddings are generated row by row. The goal is to implement a more efficient method to embed entire columns or chunks at once.
+
+2. **Jina Integration**  
+   - Add support for Jina-based embedding functionality. This feature is currently a work in progress (WIP) and will be available soon.
+
+3. **Return Arrays Instead of Strings**  
+   - Modify the output format to return arrays directly instead of strings for better usability and performance.
+
+Stay tuned for updates as these features are implemented!

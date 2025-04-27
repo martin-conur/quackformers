@@ -1,11 +1,29 @@
 use candle_transformers::models::bert::{BertModel, Config, HiddenAct, DTYPE};
-use anyhow::{Error as E, Result}; // replace this to thiserror or custom error
+use thiserror::Error; // replace this to thiserror or custom error
 use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use hf_hub::{api::sync::Api, Repo, RepoType};
 use tokenizers::Tokenizer;
 
-fn build_model_and_tokenizer(model_id: Option<String>, approximate_gelu:bool) ->Result<(BertModel, Tokenizer)> {
+#[derive(Error, Debug)]
+pub enum EmbedError {
+    #[error("IO error {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Serde JSON error: {0}")]
+    Sede(#[from] serde_json::Error),
+
+    #[error("HF Hub error: {0}")]
+    HfHub(#[from] hf_hub::api::sync::ApiError),
+
+    #[error("Tokenizer error: {0}")]
+    Tokenizer(#[from] tokenizers::Error),
+
+    #[error("Candle error: {0}")]
+    Candle(#[from] candle_core::Error),
+}
+
+fn build_model_and_tokenizer(model_id: Option<String>, approximate_gelu:bool) ->Result<(BertModel, Tokenizer), EmbedError> {
     let device = Device::Cpu;
     let default_model = "sentence-transformers/all-MiniLM-L6-v2".to_string();
     let detault_revision = "refs/pr/21".to_string();
@@ -23,7 +41,7 @@ fn build_model_and_tokenizer(model_id: Option<String>, approximate_gelu:bool) ->
     };
     let config = std::fs::read_to_string(config_filename)?;
     let mut config: Config = serde_json::from_str(&config)?;
-    let tokenizer = Tokenizer::from_file(tokenizer_filename).map_err(E::msg)?;
+    let tokenizer = Tokenizer::from_file(tokenizer_filename)?;
 
     let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, &device)? };
     if approximate_gelu {
@@ -33,19 +51,17 @@ fn build_model_and_tokenizer(model_id: Option<String>, approximate_gelu:bool) ->
     Ok((model, tokenizer))
 }
 
-pub fn embed(prompt: String) -> Result<Vec<f32>> {
+pub fn embed(prompt: String) -> Result<Vec<f32>, EmbedError> {
 
     let (model, mut tokenizer) = build_model_and_tokenizer(Some("sentence-transformers/all-MiniLM-L6-v2".to_string()),false)?;
     let device = &model.device;
 
     let tokenizer = tokenizer
         .with_padding(None)
-        .with_truncation(None)
-        .map_err(E::msg)?;
+        .with_truncation(None)?;
 
     let tokens = tokenizer
-        .encode(prompt, true)
-        .map_err(E::msg)?
+        .encode(prompt, true)?
         .get_ids()
         .to_vec();
 
@@ -63,6 +79,6 @@ pub fn embed(prompt: String) -> Result<Vec<f32>> {
     Ok(output_vec)
 }
 
-fn normalize_l2(v: &Tensor) -> Result<Tensor> {
+fn normalize_l2(v: &Tensor) -> Result<Tensor, EmbedError> {
     Ok(v.broadcast_div(&v.sqr()?.sum_keepdim(1)?.sqrt()?)?)
 }

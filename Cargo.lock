@@ -1060,12 +1060,12 @@ checksum = "49ac283b6621e3becf8014d1efa655522794075834c72f744573debef9c9f6c8"
 dependencies = [
  "arrow",
  "cast",
- "duckdb-loadable-macros",
  "fallible-iterator",
  "fallible-streaming-iterator",
  "hashlink",
  "libduckdb-sys",
  "memchr",
+ "num",
  "num-integer",
  "rust_decimal",
  "smallvec",
@@ -2906,7 +2906,6 @@ dependencies = [
 name = "quackformers"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "candle-core",
  "candle-nn",
  "candle-transformers",
@@ -2917,7 +2916,9 @@ dependencies = [
  "libduckdb-sys",
  "openssl",
  "openssl-sys",
+ "serde",
  "serde_json",
+ "thiserror 2.0.12",
  "tokenizers",
 ]
 
@@ -3484,18 +3485,18 @@ checksum = "1bc711410fbe7399f390ca1c3b60ad0f53f80e95c5eb935e52268a0e2cd49acc"
 
 [[package]]
 name = "serde"
-version = "1.0.210"
+version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8e3592472072e6e22e0a54d5904d9febf8508f65fb8552499a1abc7d1078c3a"
+checksum = "5f0e2c6ed6606019b4e29e69dbaba95b11854410e5347d525002456dbbb786b6"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.210"
+version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "243902eda00fad750862fc144cea25caca5e20d615af0a81bee94ca738f1df1f"
+checksum = "5b0276cf7f2c73365f7157c8123c21cd9a50fbbd844757af28ca1f5925fc2a00"
 dependencies = [
  "proc-macro2",
  "quote",
