@@ -20,17 +20,24 @@ path = "src/wasm_lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]
-accelerate-src = "0.3.2"
-anyhow = "1.0.98"
 candle-core = "0.8.4"
 candle-nn = "0.8.4"
 candle-transformers = "0.8.4"
-duckdb = { version = "1.2.1", features = ["vtab-loadable"] }
+duckdb = { version = "1.2.2", features = [
+    "vscalar",
+    "vscalar-arrow",
+    "vtab-arrow"
+] }
 duckdb-loadable-macros = "0.1.5"
-hf-hub = "0.4.2"
+hf-hub = { version = "0.4.2", default-features = false, features = ["rustls-tls", "ureq"] }
 intel-mkl-src = "0.8.1"
-libduckdb-sys = { version = "1.2.1", features = ["loadable-extension"] }
+libduckdb-sys = { version = "1.2.2", features = ["loadable-extension"] }
+serde = "1.0.219"
 serde_json = "1.0.140"
+thiserror = "2.0.12"
 tokenizers = "0.13.2"
-tracing-chrome = "0.7.2"
-tracing-subscriber = "0.3.19"
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+openssl-sys = { version = "0.9", features = ["vendored"] }
+

@@ -1,3 +1,11 @@
 # statically linking the C runtime on windows seems sensible?
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-Ctarget-feature=+crt-static"]
+# rustflags = ["-Ctarget-feature=+crt-static"]
+
+# For MinGW builds
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-static-libgcc"]
+
+[env]
+OPENSSL_STATIC = "1"
+OPENSSL_DIR = ""
