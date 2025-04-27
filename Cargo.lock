@@ -2915,6 +2915,7 @@ dependencies = [
  "hf-hub",
  "intel-mkl-src",
  "libduckdb-sys",
+ "openssl",
  "openssl-sys",
  "serde_json",
  "tokenizers",
