@@ -3,7 +3,7 @@ use thiserror::Error; // replace this to thiserror or custom error
 use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use hf_hub::{api::sync::Api, Repo, RepoType};
-use tokenizers::Tokenizer;
+use tokenizers::{PaddingParams, Tokenizer};
 
 #[derive(Error, Debug)]
 pub enum EmbedError {
@@ -51,32 +51,57 @@ fn build_model_and_tokenizer(model_id: Option<String>, approximate_gelu:bool) ->
     Ok((model, tokenizer))
 }
 
-pub fn embed(prompt: String) -> Result<Vec<f32>, EmbedError> {
+pub fn embed(column: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
 
     let (model, mut tokenizer) = build_model_and_tokenizer(Some("sentence-transformers/all-MiniLM-L6-v2".to_string()),false)?;
     let device = &model.device;
 
-    let tokenizer = tokenizer
-        .with_padding(None)
-        .with_truncation(None)?;
+    if let Some(pp) = tokenizer.get_padding_mut() {
+        pp.strategy = tokenizers::PaddingStrategy::BatchLongest
+    } else {
+        let pp = PaddingParams{
+            strategy: tokenizers::PaddingStrategy::BatchLongest,
+            ..Default::default()
+        };
+        tokenizer.with_padding(Some(pp));
+    }
 
     let tokens = tokenizer
-        .encode(prompt, true)?
-        .get_ids()
-        .to_vec();
+        .encode_batch(column, true)?;
+    let token_ids = tokens
+        .iter()
+        .map(|tokens|{
+            let tokens = tokens.get_ids().to_vec();
+            Ok(Tensor::new(tokens.as_slice(), device)?)
+        })
+        .collect::<Result<Vec<_>, EmbedError>>()?;
+    let attention_mask = tokens
+        .iter()
+        .map(|tokens| {
+            let tokens = tokens.get_attention_mask().to_vec();
+            Ok(Tensor::new(tokens.as_slice(), device)?)
+        })
+        .collect::<Result<Vec<_>, EmbedError>>()?;
 
-    let token_ids = Tensor::new(&tokens[..], device)?.unsqueeze(0)?;
+    let token_ids = Tensor::stack(&token_ids, 0)?;
+    let attention_mask = Tensor::stack(&attention_mask, 0)?;
     let token_type_ids = token_ids.zeros_like()?;
 
-    let ys = &model.forward(&token_ids, &token_type_ids, None)?;
+    let embeddings = model.forward(&token_ids, &token_type_ids, Some(&attention_mask))?;
 
-    let mean = ys.mean(1)?;
+    let attention_mask = attention_mask.to_dtype(candle_core::DType::F32)?;
 
-    let mean_normalized = normalize_l2(&mean)?;
+    // Correct: unsqueeze dimension 2 (not -1)
+    let masked_embeddings = embeddings.broadcast_mul(&attention_mask.unsqueeze(2)?)?;
 
-    let output_vec = mean_normalized.to_vec2::<f32>()?[0].clone();
+    let sum_embeddings = masked_embeddings.sum(1)?;
+    let real_token_counts = attention_mask.sum(1)?.maximum(1e-8)?;
 
-    Ok(output_vec)
+    let mean_embeddings = sum_embeddings.broadcast_div(&real_token_counts.unsqueeze(1)?)?;
+
+    let normalized_embeddings = normalize_l2(&mean_embeddings)?;
+    Ok(normalized_embeddings.to_vec2()?)
+
 }
 
 fn normalize_l2(v: &Tensor) -> Result<Tensor, EmbedError> {

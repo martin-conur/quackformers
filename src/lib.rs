@@ -33,14 +33,13 @@ fn duckdb_string_to_owned_string(word: &duckdb_string_t) -> String {
     }
 }
 
-fn process_strings(input_slice: &[duckdb_string_t]) -> Result<Vec<Vec<f32>>, EmbedError> {
+fn process_strings(input_slice: &[duckdb_string_t]) -> Result<Vec<String>, EmbedError> {
     input_slice
         .iter()
         .map(|word| {
-            let string = duckdb_string_to_owned_string(word);
-            embed(string)
+            Ok(duckdb_string_to_owned_string(word))
         })
-        .collect()
+        .collect::<Result<Vec<String>, EmbedError>>()
 }
 
 struct EmbedFunc; 
@@ -66,7 +65,8 @@ impl VScalar for EmbedFunc {
         let output_flat_vector = output.flat_vector();
 
         // Bert embed
-        let embedded_phrases = process_strings(input_slice)?;
+        let vect_phrases = process_strings(input_slice)?;
+        let embedded_phrases = embed(vect_phrases)?;
 
 
         for (i, embedded_phrase) in embedded_phrases.iter().enumerate() {
