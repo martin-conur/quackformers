@@ -15,14 +15,14 @@ use libduckdb_sys::{
     duckdb_string_t_data,
     duckdb_string_t_length,
 };
-use duckdb::core::Inserter;
 use duckdb::ffi;
 use std::slice;
 
 mod embed_utils;
 use embed_utils::embed;
 use embed_utils::EmbedError;
-use std::ffi::CString;
+
+mod jina_implementation;
 
 fn duckdb_string_to_owned_string(word: &duckdb_string_t) -> String {
     unsafe {
