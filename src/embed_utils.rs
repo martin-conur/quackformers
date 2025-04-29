@@ -51,11 +51,12 @@ fn build_model_and_tokenizer(model_id: Option<String>, approximate_gelu:bool) ->
     Ok((model, tokenizer))
 }
 
-pub fn embed(column: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
+pub fn embed(column: Vec<String>, batch_size: usize) -> Result<Vec<Vec<f32>>, EmbedError> {
 
     let (model, mut tokenizer) = build_model_and_tokenizer(Some("sentence-transformers/all-MiniLM-L6-v2".to_string()),false)?;
     let device = &model.device;
 
+    // padding 
     if let Some(pp) = tokenizer.get_padding_mut() {
         pp.strategy = tokenizers::PaddingStrategy::BatchLongest
     } else {
@@ -66,42 +67,45 @@ pub fn embed(column: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
         tokenizer.with_padding(Some(pp));
     }
 
-    let tokens = tokenizer
-        .encode_batch(column, true)?;
-    let token_ids = tokens
-        .iter()
-        .map(|tokens|{
-            let tokens = tokens.get_ids().to_vec();
-            Ok(Tensor::new(tokens.as_slice(), device)?)
-        })
-        .collect::<Result<Vec<_>, EmbedError>>()?;
-    let attention_mask = tokens
-        .iter()
-        .map(|tokens| {
-            let tokens = tokens.get_attention_mask().to_vec();
-            Ok(Tensor::new(tokens.as_slice(), device)?)
-        })
-        .collect::<Result<Vec<_>, EmbedError>>()?;
+    // chunk based approach
+    let mut all_embeddings = Vec::with_capacity(column.len());
 
-    let token_ids = Tensor::stack(&token_ids, 0)?;
-    let attention_mask = Tensor::stack(&attention_mask, 0)?;
-    let token_type_ids = token_ids.zeros_like()?;
+    for chunk in column.chunks(batch_size) {
+        let tokens = tokenizer.encode_batch(chunk.to_vec(), true)?;
 
-    let embeddings = model.forward(&token_ids, &token_type_ids, Some(&attention_mask))?;
+        let token_ids = tokens
+            .iter()
+            .map(|tokens|{
+                let tokens = tokens.get_ids().to_vec();
+                Ok(Tensor::new(tokens.as_slice(), device)?)
+            })
+            .collect::<Result<Vec<_>, EmbedError>>()?;
 
-    let attention_mask = attention_mask.to_dtype(candle_core::DType::F32)?;
+        let attention_mask = tokens
+            .iter()
+            .map(|tokens| {
+                let tokens = tokens.get_attention_mask().to_vec();
+                Ok(Tensor::new(tokens.as_slice(), device)?)
+            })
+            .collect::<Result<Vec<_>, EmbedError>>()?;
 
-    // Correct: unsqueeze dimension 2 (not -1)
-    let masked_embeddings = embeddings.broadcast_mul(&attention_mask.unsqueeze(2)?)?;
+        let token_ids = Tensor::stack(&token_ids, 0)?;
+        let attention_mask = Tensor::stack(&attention_mask, 0)?;
+        let token_type_ids = token_ids.zeros_like()?;
 
-    let sum_embeddings = masked_embeddings.sum(1)?;
-    let real_token_counts = attention_mask.sum(1)?.maximum(1e-8)?;
+        let embeddings = model.forward(&token_ids, &token_type_ids, Some(&attention_mask))?;
 
-    let mean_embeddings = sum_embeddings.broadcast_div(&real_token_counts.unsqueeze(1)?)?;
-
-    let normalized_embeddings = normalize_l2(&mean_embeddings)?;
-    Ok(normalized_embeddings.to_vec2()?)
-
+        let attention_mask = attention_mask.to_dtype(candle_core::DType::F32)?;
+        let masked_embeddings = embeddings.broadcast_mul(&attention_mask.unsqueeze(2)?)?;
+        let sum_embeddings = masked_embeddings.sum(1)?;
+        let real_token_counts = attention_mask.sum(1)?.maximum(1e-8)?;
+        let mean_embeddings = sum_embeddings.broadcast_div(&real_token_counts.unsqueeze(1)?)?;
+        let normalized_embeddings = normalize_l2(&mean_embeddings)?;
+        
+        let chunk_embeddings = normalized_embeddings.to_vec2()?;
+        all_embeddings.extend(chunk_embeddings);
+    }
+    Ok(all_embeddings)
 }
 
 fn normalize_l2(v: &Tensor) -> Result<Tensor, EmbedError> {

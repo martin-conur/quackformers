@@ -3,7 +3,7 @@ extern crate duckdb_loadable_macros;
 extern crate libduckdb_sys;
 
 use duckdb::{
-    core::{DataChunkHandle, LogicalTypeId},
+    core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId},
     vscalar::{ScalarFunctionSignature, VScalar},
     vtab::arrow::WritableVector,
     Connection, Result,
@@ -62,17 +62,29 @@ impl VScalar for EmbedFunc {
         // slice of strings
         let input_slice = input_vec.as_slice_with_len::<duckdb_string_t>(input.len());
 
-        let output_flat_vector = output.flat_vector();
+        // let output_flat_vector = output.flat_vector();
+        let mut output_list_vector = output.list_vector();
 
         // Bert embed
         let vect_phrases = process_strings(input_slice)?;
-        let embedded_phrases = embed(vect_phrases)?;
+        let embedded_phrases = embed(vect_phrases, 32)?;
 
+        let total_len: usize = embedded_phrases.iter().map(|v| v.len()).sum();
+        let mut child_vector = output_list_vector.child(total_len);
 
+        let mut offset = 0;
         for (i, embedded_phrase) in embedded_phrases.iter().enumerate() {
-            let embedded_phrase_string = CString::new(format!("{:?}", embedded_phrase))?;
-            output_flat_vector.insert(i, embedded_phrase_string);
+            child_vector.as_mut_slice_with_len(offset + embedded_phrase.len())[offset .. offset + embedded_phrase.len()]
+                .copy_from_slice(embedded_phrase);
+
+            output_list_vector.set_entry(i, offset, embedded_phrase.len());
+
+            offset += embedded_phrase.len();
+            // let embedded_phrase_string = CString::new(format!("{:?}", embedded_phrase))?;
+            // output_flat_vector.insert(i, embedded_phrase_string);
         }
+        output_list_vector.set_len(embedded_phrases.len());
+
 
         Ok(())
     }
@@ -80,7 +92,7 @@ impl VScalar for EmbedFunc {
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
             vec![LogicalTypeId::Varchar.into()],
-            LogicalTypeId::Varchar.into(),
+            LogicalTypeHandle::list(&LogicalTypeId::Float.into()),
         )]
     }
 }
