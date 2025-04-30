@@ -6,7 +6,7 @@ use candle_transformers::models::stable_diffusion::attention;
 use serde::de::value;
 use serde::Deserialize;
 
-use crate::embed_utils::EmbedError;
+use crate::embed_utils::EmbeddingError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct Alibi;
@@ -308,4 +308,63 @@ fn build_alibi_bias(config: &Config) -> Result<Tensor> {
     };
     let slopes = Tensor::new(slopes, &Device::Cpu)?.reshape((1, (), 1, 1))?;
     alibi_bias.to_dtype(DType::F32)?.broadcast_mul(&slopes)
+}
+
+#[derive(Clone, Debug)]
+struct BertEncoder {
+    alibi: Tensor,
+    layers: Vec<BertLayer>,
+}
+
+impl BertEncoder {
+    fn new(vb: VarBuilder, config: &Config) -> Result<Self> {
+        let layers = (0..config.num_hidden_layers)
+            .map(|index| BertLayer::new(vb.pp(format!("layer.{index}")), config))
+            .collect::<Result<Vec<_>>>()?;
+        let alibi = build_alibi_bias(config)?.to_device(vb.device())?;
+        Ok(Self {
+            alibi,
+            layers
+        })
+    }
+
+}
+
+impl Module for BertEncoder {
+    fn forward(&self, xs: &Tensor) -> Result<Tensor> {
+        let seq_len = xs.dim(1)?;
+        let alibi_bias = self.alibi.i((.., .., ..seq_len, ..seq_len))?;
+        let mut xs = xs.clone();
+        for layer in self.layers.iter() {
+            xs = layer.forward(&xs, &alibi_bias)?
+        }
+        Ok(xs)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct JinaModel {
+    embeddings: BertEmbeddings,
+    encoder: BertEncoder,
+    pub device: Device,
+}
+
+impl JinaModel {
+    pub fn new(vb: VarBuilder, config: &Config) -> Result<Self> {
+        let embeddings = BertEmbeddings::new(vb.pp("embeddings"), config)?;
+        let encoder = BertEncoder::new(vb.pp("encoder"), config)?;
+        Ok(Self {
+            embeddings,
+            encoder,
+            device: vb.device().clone()
+        })
+    }
+}
+
+impl Module for JinaModel {
+    fn forward(&self, input_ids: &Tensor) -> Result<Tensor> {
+        let embedding_output = self.embeddings.forward(input_ids)?;
+        let sequence_output = self.encoder.forward(&embedding_output)?;
+        Ok(sequence_output)
+    }
 }

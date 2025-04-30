@@ -4,9 +4,12 @@ use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use hf_hub::{api::sync::Api, Repo, RepoType};
 use tokenizers::{PaddingParams, Tokenizer};
+// Jina model 
+mod jina_implementation;
+use jina_implementation::{JinaModel, Config as JinaConfig, Alibi};
 
 #[derive(Error, Debug)]
-pub enum EmbedError {
+pub enum EmbeddingError {
     #[error("IO error {0}")]
     Io(#[from] std::io::Error),
 
@@ -23,7 +26,52 @@ pub enum EmbedError {
     Candle(#[from] candle_core::Error),
 }
 
-fn build_model_and_tokenizer(model_id: Option<String>, approximate_gelu:bool) ->Result<(BertModel, Tokenizer), EmbedError> {
+enum EmbeddingModels {
+    JinaModel,
+    BertModel
+}
+
+struct Model{
+    model: EmbeddingModels
+}
+
+// first I'm gonna do separate implementations, just to have a fast iteration
+// but later I'm gonna implment generic Model abstraction so we could have 
+// different models and not repeat myselft too much (DRY)
+pub fn build_model_and_tokenizer_jina(column: Vec<String>, batch_size: usize) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+    let device = Device::Cpu;
+    let model_id = "jinaai/jina-embeddings-v2-base-en".to_string();
+    let repo = Repo::new(model_id, RepoType::Model);
+    let (tokenizer_filename, weights_filename) = {
+        let api = Api::new()?;
+        let api = api.repo(repo);
+        let tokenizer = api.get("tokenizer.json")?;
+        let weights = api.get("model.safetensors")?;
+        (tokenizer, weights)
+    };
+    let tokenizer = Tokenizer::from_file(tokenizer_filename)?; 
+
+    let config = JinaConfig::new(
+        tokenizer.get_vocab_size(true),
+        768,
+        12,
+        12,
+        3072,
+        candle_nn::Activation::Gelu,
+        8192,
+        2,
+        0.02,
+        1e-12,
+        0,
+        Alibi,
+    );
+    let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, &device)? };
+    // todo: need to homologize new or load
+    let model = JinaModel::new(vb, &config)?;
+    Ok((model, tokenizer))
+}
+
+fn build_model_and_tokenizer(model_id: Option<String>, approximate_gelu:bool) ->Result<(BertModel, Tokenizer), EmbeddingError> {
     let device = Device::Cpu;
     let default_model = "sentence-transformers/all-MiniLM-L6-v2".to_string();
     let detault_revision = "refs/pr/21".to_string();
@@ -51,7 +99,7 @@ fn build_model_and_tokenizer(model_id: Option<String>, approximate_gelu:bool) ->
     Ok((model, tokenizer))
 }
 
-pub fn embed(column: Vec<String>, batch_size: usize) -> Result<Vec<Vec<f32>>, EmbedError> {
+pub fn embed(column: Vec<String>, batch_size: usize) -> Result<Vec<Vec<f32>>, EmbeddingError> {
 
     let (model, mut tokenizer) = build_model_and_tokenizer(Some("sentence-transformers/all-MiniLM-L6-v2".to_string()),false)?;
     let device = &model.device;
@@ -79,7 +127,7 @@ pub fn embed(column: Vec<String>, batch_size: usize) -> Result<Vec<Vec<f32>>, Em
                 let tokens = tokens.get_ids().to_vec();
                 Ok(Tensor::new(tokens.as_slice(), device)?)
             })
-            .collect::<Result<Vec<_>, EmbedError>>()?;
+            .collect::<Result<Vec<_>, EmbeddingError>>()?;
 
         let attention_mask = tokens
             .iter()
@@ -87,7 +135,7 @@ pub fn embed(column: Vec<String>, batch_size: usize) -> Result<Vec<Vec<f32>>, Em
                 let tokens = tokens.get_attention_mask().to_vec();
                 Ok(Tensor::new(tokens.as_slice(), device)?)
             })
-            .collect::<Result<Vec<_>, EmbedError>>()?;
+            .collect::<Result<Vec<_>, EmbeddingError>>()?;
 
         let token_ids = Tensor::stack(&token_ids, 0)?;
         let attention_mask = Tensor::stack(&attention_mask, 0)?;
@@ -108,6 +156,6 @@ pub fn embed(column: Vec<String>, batch_size: usize) -> Result<Vec<Vec<f32>>, Em
     Ok(all_embeddings)
 }
 
-fn normalize_l2(v: &Tensor) -> Result<Tensor, EmbedError> {
+fn normalize_l2(v: &Tensor) -> Result<Tensor, EmbeddingError> {
     Ok(v.broadcast_div(&v.sqr()?.sum_keepdim(1)?.sqrt()?)?)
 }

@@ -19,10 +19,7 @@ use duckdb::ffi;
 use std::slice;
 
 mod embed_utils;
-use embed_utils::embed;
-use embed_utils::EmbedError;
-
-mod jina_implementation;
+use embed_utils::{embed, jina_embed, EmbeddingError};
 
 fn duckdb_string_to_owned_string(word: &duckdb_string_t) -> String {
     unsafe {
@@ -33,13 +30,13 @@ fn duckdb_string_to_owned_string(word: &duckdb_string_t) -> String {
     }
 }
 
-fn process_strings(input_slice: &[duckdb_string_t]) -> Result<Vec<String>, EmbedError> {
+fn process_strings(input_slice: &[duckdb_string_t]) -> Result<Vec<String>, EmbeddingError> {
     input_slice
         .iter()
         .map(|word| {
             Ok(duckdb_string_to_owned_string(word))
         })
-        .collect::<Result<Vec<String>, EmbedError>>()
+        .collect::<Result<Vec<String>, EmbeddingError>>()
 }
 
 struct EmbedFunc; 
