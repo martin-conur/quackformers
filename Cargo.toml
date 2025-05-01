@@ -1,7 +1,10 @@
 [package]
 name = "quackformers"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
+
+[package.metadata]
+maintainers = ["Martin Contreras <martincontrerasur@gmail.com"]
 
 [lib]
 crate-type = ["cdylib"]

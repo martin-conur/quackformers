@@ -1,15 +1,15 @@
-#![allow(dead_code, unused_imports)]
-use candle_core::{DType, Device, IndexOp, Result, Tensor, Var, D};
-use candle_nn::{layer_norm, LayerNorm, Module, VarBuilder, linear, Linear, Embedding, linear_no_bias, embedding};
+use candle_core::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::ops::softmax_last_dim;
-use candle_transformers::models::stable_diffusion::attention;
-use serde::de::value;
+use candle_nn::{
+    embedding, layer_norm, linear, linear_no_bias, Embedding, LayerNorm, Linear, Module, VarBuilder,
+};
 use serde::Deserialize;
 
-use crate::embed_utils::EmbeddingError;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub struct Alibi;
+pub enum PositionEmbeddingType {
+    Alibi,
+    Absolute,
+}
 
 // Create a config struct with its impl based on https://huggingface.co/jinaai/jina-embeddings-v2-base-en/blob/main/config.json
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -25,7 +25,7 @@ pub struct Config {
     pub initializer_range: f64,
     pub layer_norm_eps: f64,
     pub pad_token_id: usize,
-    pub position_embedding_type: Alibi,
+    pub position_embedding_type: PositionEmbeddingType,
 }
 
 impl Config {
@@ -42,11 +42,12 @@ impl Config {
             initializer_range: 0.02,
             layer_norm_eps: 1e-12,
             pad_token_id: 0,
-            position_embedding_type: Alibi,
+            position_embedding_type: PositionEmbeddingType::Alibi,
         }
     }
 
-    // If we want a different config, not sure if we're gonna use this 
+    // If we want a different config, not sure if we're gonna use this
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         vocab_size: usize,
         hidden_size: usize,
@@ -59,7 +60,7 @@ impl Config {
         initializer_range: f64,
         layer_norm_eps: f64,
         pad_token_id: usize,
-        position_embedding_type: Alibi,
+        position_embedding_type: PositionEmbeddingType,
     ) -> Self {
         Self {
             vocab_size,
@@ -73,14 +74,13 @@ impl Config {
             initializer_range,
             layer_norm_eps,
             pad_token_id,
-            position_embedding_type
+            position_embedding_type,
         }
     }
 }
 
-
-// Based on candle implementation of BertEmbedding but without 
-// position embeddings, one of the main differences with Jina 
+// Based on candle implementation of BertEmbedding but without
+// position embeddings, one of the main differences with Jina
 #[derive(Clone, Debug)]
 struct BertEmbeddings {
     word_embeddings: Embedding,
@@ -90,36 +90,45 @@ struct BertEmbeddings {
 
 impl BertEmbeddings {
     fn new(vb: VarBuilder, config: &Config) -> Result<Self> {
-        let word_embeddings = embedding(config.vocab_size, config.vocab_size, vb.pp("word_embeddings"))?;
-        let token_type_embeddings = embedding(config.type_vocab_size, config.hidden_size, vb.pp("token_type_embeddings"))?;
-        let layer_norm = layer_norm(config.hidden_size, config.layer_norm_eps, vb.pp("LayerNorm"))?;
-        Ok(Self{
+        let word_embeddings = embedding(
+            config.vocab_size,
+            config.hidden_size,
+            vb.pp("word_embeddings"),
+        )?;
+        let token_type_embeddings = embedding(
+            config.type_vocab_size,
+            config.hidden_size,
+            vb.pp("token_type_embeddings"),
+        )?;
+        let layer_norm = layer_norm(
+            config.hidden_size,
+            config.layer_norm_eps,
+            vb.pp("LayerNorm"),
+        )?;
+        Ok(Self {
             word_embeddings,
             token_type_embeddings,
-            layer_norm
+            layer_norm,
         })
     }
 }
 
-
-
 impl Module for BertEmbeddings {
-    fn forward(&self, input_ids: &Tensor) ->Result<Tensor> {
+    fn forward(&self, input_ids: &Tensor) -> Result<Tensor> {
         let (b_size, seq_len) = input_ids.dims2()?;
         let input_embeddings = self.word_embeddings.forward(input_ids)?;
-        let token_type_embeddings = Tensor::zeros(seq_len, DType::U32, input_ids.device())?
-            .broadcast_left(b_size)?;
+        let token_type_embeddings =
+            Tensor::zeros(seq_len, DType::U32, input_ids.device())?.broadcast_left(b_size)?.apply(&self.token_type_embeddings)?;
         let embeddings = (&input_embeddings + token_type_embeddings)?;
         let embeddings = self.layer_norm.forward(&embeddings)?;
         Ok(embeddings)
     }
 }
 
-
 // Architecture
 #[derive(Clone, Debug)]
 struct BertSelfAttention {
-    query: Linear, 
+    query: Linear,
     key: Linear,
     value: Linear,
     num_attention_heads: usize,
@@ -136,12 +145,12 @@ impl BertSelfAttention {
         let value = linear(hidden_size, all_head_size, vb.pp("value"))?;
         let key = linear(hidden_size, all_head_size, vb.pp("key"))?;
 
-        Ok(Self { 
-            query, 
-            key, 
-            value, 
-            num_attention_heads: config.num_attention_heads, 
-            attention_head_size 
+        Ok(Self {
+            query,
+            key,
+            value,
+            num_attention_heads: config.num_attention_heads,
+            attention_head_size,
         })
     }
 
@@ -169,7 +178,7 @@ impl BertSelfAttention {
         let context_layer = attention_probs.matmul(&value_layer)?;
         let context_layer = context_layer.transpose(1, 2)?.contiguous()?;
         let context_layer = context_layer.flatten_from(D::Minus2)?;
-        
+
         Ok(context_layer)
     }
 }
@@ -183,11 +192,12 @@ struct BertSelfOutput {
 impl BertSelfOutput {
     fn new(vb: VarBuilder, config: &Config) -> Result<Self> {
         let dense = linear(config.hidden_size, config.hidden_size, vb.pp("dense"))?;
-        let layer_norm = layer_norm(config.hidden_size, config.layer_norm_eps, vb.pp("LayerNorm"))?;
-        Ok(Self {
-            dense,
-            layer_norm
-        })
+        let layer_norm = layer_norm(
+            config.hidden_size,
+            config.layer_norm_eps,
+            vb.pp("LayerNorm"),
+        )?;
+        Ok(Self { dense, layer_norm })
     }
 
     fn forward(&self, xs: &Tensor, input_tensor: &Tensor) -> Result<Tensor> {
@@ -197,7 +207,7 @@ impl BertSelfOutput {
 }
 
 #[derive(Clone, Debug)]
-struct BertAttention{
+struct BertAttention {
     self_attention: BertSelfAttention,
     self_output: BertSelfOutput,
 }
@@ -207,8 +217,8 @@ impl BertAttention {
         let self_attention = BertSelfAttention::new(vb.pp("self"), config)?;
         let self_output = BertSelfOutput::new(vb.pp("output"), config)?;
         Ok(Self {
-            self_attention, 
-            self_output
+            self_attention,
+            self_output,
         })
     }
 
@@ -231,16 +241,24 @@ struct BertGLUMLP {
 
 impl BertGLUMLP {
     fn new(vb: VarBuilder, config: &Config) -> Result<Self> {
-        let gated_layers = linear_no_bias(config.hidden_size, config.intermediate_size * 2, vb.pp("gated_layers"))?;
+        let gated_layers = linear_no_bias(
+            config.hidden_size,
+            config.intermediate_size * 2,
+            vb.pp("gated_layers"),
+        )?;
         let act = candle_nn::Activation::Gelu;
         let wo = linear(config.intermediate_size, config.hidden_size, vb.pp("wo"))?;
-        let layernorm = layer_norm(config.hidden_size, config.layer_norm_eps, vb.pp("layernorm"))?;
+        let layernorm = layer_norm(
+            config.hidden_size,
+            config.layer_norm_eps,
+            vb.pp("layernorm"),
+        )?;
         Ok(Self {
             gated_layers,
             act,
             wo,
             layernorm,
-            intermediate_size: config.intermediate_size
+            intermediate_size: config.intermediate_size,
         })
     }
 }
@@ -266,13 +284,10 @@ impl BertLayer {
     fn new(vb: VarBuilder, config: &Config) -> Result<Self> {
         let attention = BertAttention::new(vb.pp("attention"), config)?;
         let mlp = BertGLUMLP::new(vb.pp("mlp"), config)?;
-        Ok(Self {
-            attention,
-            mlp
-        })
+        Ok(Self { attention, mlp })
     }
 
-    fn forward(&self, xs: &Tensor, bias: &Tensor) ->Result<Tensor> {
+    fn forward(&self, xs: &Tensor, bias: &Tensor) -> Result<Tensor> {
         self.attention.forward(xs, bias)?.apply(&self.mlp)
     }
 }
@@ -322,12 +337,8 @@ impl BertEncoder {
             .map(|index| BertLayer::new(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
         let alibi = build_alibi_bias(config)?.to_device(vb.device())?;
-        Ok(Self {
-            alibi,
-            layers
-        })
+        Ok(Self { alibi, layers })
     }
-
 }
 
 impl Module for BertEncoder {
@@ -350,19 +361,21 @@ pub struct JinaModel {
 }
 
 impl JinaModel {
-    pub fn new(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         let embeddings = BertEmbeddings::new(vb.pp("embeddings"), config)?;
         let encoder = BertEncoder::new(vb.pp("encoder"), config)?;
         Ok(Self {
             embeddings,
             encoder,
-            device: vb.device().clone()
+            device: vb.device().clone(),
         })
     }
-}
-
-impl Module for JinaModel {
-    fn forward(&self, input_ids: &Tensor) -> Result<Tensor> {
+    pub fn forward(
+        &self,
+        input_ids: &Tensor,
+        _token_type_ids: &Tensor,
+        _attention_mask: Option<&Tensor>,
+    ) -> Result<Tensor> {
         let embedding_output = self.embeddings.forward(input_ids)?;
         let sequence_output = self.encoder.forward(&embedding_output)?;
         Ok(sequence_output)
