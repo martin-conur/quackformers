@@ -15,6 +15,11 @@ require icu
 
 # Confirm the extension works
 query I
-SELECT len(embed('this is a random sentence')::FLOAT[384]) ;
+SELECT len(embed('this is a random sentence'));
 ----
 384
+
+query I
+SELECT len(embed_jina('this is a random sentence'));
+----
+768

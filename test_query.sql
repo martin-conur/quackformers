@@ -103,4 +103,4 @@ VALUES
     ('How does a battery store energy?')
 ;
 
-SELECT embed(RANDOM_QUESTIONS) embedded_questions FROM QUESTIONS;
+SELECT embed_jina(RANDOM_QUESTIONS) embedded_questions FROM QUESTIONS;
