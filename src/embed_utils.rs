@@ -15,7 +15,7 @@ pub enum EmbeddingError {
     Io(#[from] std::io::Error),
 
     #[error("Serde JSON error: {0}")]
-    Sede(#[from] serde_json::Error),
+    Serde(#[from] serde_json::Error),
 
     #[error("HF Hub error: {0}")]
     HfHub(#[from] hf_hub::api::sync::ApiError),
@@ -25,76 +25,97 @@ pub enum EmbeddingError {
 
     #[error("Candle error: {0}")]
     Candle(#[from] candle_core::Error),
+
+    #[error("Model type error: {0}")]
+    ModelTypeError(String),
 }
 
-pub struct TextEmbedder<M> {
-    model: M,
+pub struct TextEmbedder {
+    model: Box<dyn EmbedModel>,
     tokenizer: Tokenizer,
 }
 
-// first I'm gonna do separate implementations, just to have a fast iteration
-// but later I'm gonna implment generic Model abstraction so we could have
-// different models and not repeat myselft too much (DRY)
-pub fn build_model_and_tokenizer_jina() -> Result<TextEmbedder<JinaModel>, EmbeddingError> {
-    let device = Device::Cpu;
-    let model_id = "jinaai/jina-embeddings-v2-base-en".to_string();
-    let repo = Repo::new(model_id, RepoType::Model);
-    let (tokenizer_filename, weights_filename) = {
-        let api = Api::new()?;
-        let api = api.repo(repo);
-        let tokenizer = api.get("tokenizer.json")?;
-        let weights = api.get("model.safetensors")?;
-        (tokenizer, weights)
-    };
-    let tokenizer = Tokenizer::from_file(tokenizer_filename)?;
-
-    let config = JinaConfig::v2_base();
-    let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, &device)? };
-    let model = JinaModel::load(vb, &config)?;
-    Ok(TextEmbedder { model, tokenizer })
+#[derive(Clone, Debug)]
+pub enum ModelType {
+    Bert(Device),
+    Jina(Device),
 }
 
-pub fn build_model_and_tokenizer(
-    approximate_gelu: bool,
-) -> Result<TextEmbedder<BertModel>, EmbeddingError> {
-    let device = Device::Cpu;
-    let model_id = "sentence-transformers/all-MiniLM-L6-v2".to_string();
-    let detault_revision = "refs/pr/21".to_string();
-
-    let repo = Repo::with_revision(model_id, RepoType::Model, detault_revision);
-    let (tokenizer_filename, weights_filename) = {
-        let api = Api::new()?;
-        let api = api.repo(repo);
-        let tokenizer = api.get("tokenizer.json")?;
-        let weights = api.get("model.safetensors")?;
-        (tokenizer, weights)
-    };
-    let mut config = Config {
-        vocab_size: 30522,
-        hidden_size: 384,
-        num_hidden_layers: 6,
-        num_attention_heads: 12,
-        intermediate_size: 1536,
-        hidden_act: HiddenAct::Gelu,
-        hidden_dropout_prob: 0.1,
-        max_position_embeddings: 512,
-        type_vocab_size: 2,
-        initializer_range: 0.02,
-        layer_norm_eps: 1e-12,
-        pad_token_id: 0,
-        position_embedding_type: PositionEmbeddingType::Absolute,
-        use_cache: true,
-        classifier_dropout: None,
-        model_type: Some("bert".to_string()),
-    };
-    let tokenizer = Tokenizer::from_file(tokenizer_filename)?;
-
-    let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, &device)? };
-    if approximate_gelu {
-        config.hidden_act = HiddenAct::GeluApproximate;
+impl ModelType {
+    fn get_model_id(&self) -> String {
+        match &self {
+            Self::Bert(_) => "sentence-transformers/all-MiniLM-L6-v2".to_string(),
+            Self::Jina(_) => "jinaai/jina-embeddings-v2-base-en".to_string(),
+        }
     }
-    let model = BertModel::load(vb, &config)?;
-    Ok(TextEmbedder { model, tokenizer })
+
+    fn get_jina_model(&self, vb: VarBuilder) -> Result<JinaModel, EmbeddingError> {
+        match &self {
+            Self::Jina(_) => {
+                let config = JinaConfig::v2_base();
+                Ok(JinaModel::load(vb, &config)?)
+            }
+            _ => Err(EmbeddingError::ModelTypeError(
+                "Incorrect Model Type".into(),
+            )),
+        }
+    }
+
+    fn get_bert_model(&self, vb: VarBuilder) -> Result<BertModel, EmbeddingError> {
+        match &self {
+            Self::Bert(_) => {
+                let config = Config {
+                    vocab_size: 30522,
+                    hidden_size: 384,
+                    num_hidden_layers: 6,
+                    num_attention_heads: 12,
+                    intermediate_size: 1536,
+                    hidden_act: HiddenAct::Gelu,
+                    hidden_dropout_prob: 0.1,
+                    max_position_embeddings: 512,
+                    type_vocab_size: 2,
+                    initializer_range: 0.02,
+                    layer_norm_eps: 1e-12,
+                    pad_token_id: 0,
+                    position_embedding_type: PositionEmbeddingType::Absolute,
+                    use_cache: true,
+                    classifier_dropout: None,
+                    model_type: Some("bert".to_string()),
+                };
+                Ok(BertModel::load(vb, &config)?)
+            }
+            _ => Err(EmbeddingError::ModelTypeError(
+                "Incorrect Model Type".into(),
+            )),
+        }
+    }
+
+    pub fn build_text_embedder(&self) -> Result<TextEmbedder, EmbeddingError> {
+        let device = match &self {
+            Self::Bert(device) => device,
+            Self::Jina(device) => device,
+        };
+        let model_id = self.get_model_id();
+        let repo = Repo::new(model_id, RepoType::Model);
+        let (tokenizer_filename, weights_filename) = {
+            let api = Api::new()?;
+            let api = api.repo(repo);
+            let tokenizer = api.get("tokenizer.json")?;
+            let weights = api.get("model.safetensors")?;
+            (tokenizer, weights)
+        };
+        let tokenizer = Tokenizer::from_file(tokenizer_filename)?;
+
+        let vb =
+            unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, device)? };
+
+        let model: Box<dyn EmbedModel> = match &self {
+            Self::Bert(_) => Box::new(self.get_bert_model(vb)?),
+            Self::Jina(_) => Box::new(self.get_jina_model(vb)?),
+        };
+
+        Ok(TextEmbedder { model, tokenizer })
+    }
 }
 
 pub trait Embed {
@@ -145,7 +166,7 @@ impl EmbedModel for JinaModel {
     }
 }
 
-impl<M: EmbedModel> Embed for TextEmbedder<M> {
+impl Embed for TextEmbedder {
     fn embed(
         &mut self,
         column: Vec<String>,

@@ -47,7 +47,7 @@ impl Config {
     }
 
     // If we want a different config, not sure if we're gonna use this
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub fn new(
         vocab_size: usize,
         hidden_size: usize,
@@ -117,8 +117,9 @@ impl Module for BertEmbeddings {
     fn forward(&self, input_ids: &Tensor) -> Result<Tensor> {
         let (b_size, seq_len) = input_ids.dims2()?;
         let input_embeddings = self.word_embeddings.forward(input_ids)?;
-        let token_type_embeddings =
-            Tensor::zeros(seq_len, DType::U32, input_ids.device())?.broadcast_left(b_size)?.apply(&self.token_type_embeddings)?;
+        let token_type_embeddings = Tensor::zeros(seq_len, DType::U32, input_ids.device())?
+            .broadcast_left(b_size)?
+            .apply(&self.token_type_embeddings)?;
         let embeddings = (&input_embeddings + token_type_embeddings)?;
         let embeddings = self.layer_norm.forward(&embeddings)?;
         Ok(embeddings)

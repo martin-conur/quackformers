@@ -2,6 +2,7 @@ extern crate duckdb;
 extern crate duckdb_loadable_macros;
 extern crate libduckdb_sys;
 
+use candle_core::Device;
 use duckdb::ffi;
 use duckdb::{
     core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId},
@@ -15,9 +16,9 @@ use std::error::Error;
 use std::slice;
 
 mod embed_utils;
-use embed_utils::{
-    build_model_and_tokenizer, build_model_and_tokenizer_jina, Embed, EmbeddingError, TextEmbedder, EmbedModel
-};
+use embed_utils::{Embed, EmbeddingError, ModelType, TextEmbedder};
+
+const DEVICE: Device = Device::Cpu;
 
 fn duckdb_string_to_owned_string(word: &duckdb_string_t) -> String {
     unsafe {
@@ -35,13 +36,13 @@ fn process_strings(input_slice: &[duckdb_string_t]) -> Result<Vec<String>, Embed
         .collect::<Result<Vec<String>, EmbeddingError>>()
 }
 
-unsafe fn generic_embed_invoke<F, M>(
+unsafe fn generic_embed_invoke<F>(
     input: &mut DataChunkHandle,
     output: &mut dyn WritableVector,
-    build_model_fn: F
-) -> std::result::Result<(), Box<dyn std::error::Error>> 
-    where
-    F: FnOnce() -> Result<TextEmbedder<M>, EmbeddingError>,  M: EmbedModel
+    build_model_fn: F,
+) -> std::result::Result<(), Box<dyn std::error::Error>>
+where
+    F: FnOnce() -> Result<TextEmbedder, EmbeddingError>,
 {
     // Extract the input word
     let input_vec = input.flat_vector(0);
@@ -91,7 +92,9 @@ impl VScalar for EmbedFunc {
         output: &mut dyn WritableVector,
     ) -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Extract the input word
-        generic_embed_invoke(input, output, || build_model_and_tokenizer(false))
+        generic_embed_invoke(input, output, || {
+            ModelType::Bert(DEVICE).build_text_embedder()
+        })
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -118,7 +121,9 @@ impl VScalar for EmbedJinaFunc {
         output: &mut dyn WritableVector,
     ) -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Extract the input word
-        generic_embed_invoke(input, output, || build_model_and_tokenizer_jina())
+        generic_embed_invoke(input, output, || {
+            ModelType::Jina(DEVICE).build_text_embedder()
+        })
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -128,7 +133,6 @@ impl VScalar for EmbedJinaFunc {
         )]
     }
 }
-
 
 const BERT_FUNCTION_NAME: &str = "embed";
 const JINA_FUNCTION_NAME: &str = "embed_jina";
