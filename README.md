@@ -27,7 +27,7 @@ SELECT embed(RANDOM_QUESTIONS)::FLOAT[384] embedded_questions FROM QUESTIONS;
 ### Example: RAG with Just DUCKDB
 
 ```sql
-INSTALL quackformers fROM  community;
+INSTALL quackformers FROM  community;
 LOAD quackformers;
 
 INSTALL vss;
