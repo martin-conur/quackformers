@@ -1,40 +1,57 @@
 # Quackformers: A DuckDB Extension for LLM-Related Functionality
 
-**Quackformers**, a DuckDB extension for LLM-related tasks. For now, it embeds sentences using the following query:
+**Quackformers**, a DuckDB extension for LLM-related tasks. For embedding and RAG-like features on DuckDB:
 
 ```sql
-LOAD 'build/debug/quackformers.duckdb_extension';
+LOAD 'build/debug/quackformers.duckdb_extension'; -- IF BUILDING LOCALLY
+
+-- IMPORTING FROM DUCKDB COMMUNITY
+INSTALL quackformers fROM  community;
+LOAD quackformers;
+
+-- IMPORTING FROM GITHUB REPO
+LOAD quackformers FROM 'https://github.com/martin-conur/quackformers';
+
 CREATE TEMP TABLE QUESTIONS(random_questions) AS
 VALUES
     ('What is the capital of France?'),
     ('How does a car engine work?'),
     ('What is the tallest mountain in the world?'),
     ('How do airplanes stay in the air?'),
-    ('What is the speed of light?'),
-    ('Who wrote "To Kill a Mockingbird"?'),
-    ('What is the chemical formula for water?'),
-    ('How do I bake a chocolate cake?'),
-    ('What is the population of Japan?'),
-    ('How does photosynthesis work?'),
-    ('What is the currency of Brazil?'),
-    ('Who painted the Mona Lisa?'),
-    ('What is the boiling point of water?'),
-    ('How do I play the guitar?'),
-    ('What is the largest ocean on Earth?'),
-    ('Who discovered gravity?'),
-    ('What is the process of making glass?'),
-    ('How do I learn a new language?'),
-    ('What is the history of the internet?'),
-    ('How does a computer processor work?')
+    ('What is the speed of light?')
 ;
 
 SELECT embed(RANDOM_QUESTIONS)::FLOAT[384] embedded_questions FROM QUESTIONS;
 ```
 
-**Note:** Before calling `embed(prompt)`, ensure that you have built the extension (see the [Building](#building) section) and are running DuckDB with the `-unsigned` flag:
+### Example: RAG with Just DUCKDB
 
+```sql
+INSTALL quackformers fROM  community;
+LOAD quackformers;
+
+INSTALL vss;
+LOAD vss;
+
+CREATE TABLE vector_table AS
+SELECT *, embed(text)::FLOAT[384] as embedded_text FROM read_csv_auto('some/path/to/file/filename.csv');
+CREATE INDEX hnsw_index on vector_table USING HNSW (embedded_text);
+
+-- GETTING MOST IMPORTANT CHUNKS BASED ON QUESTION
+SELECT text FROM vector_table
+ORDER BY array_distance(embedded_text, embed('Some question related to the file?')::FLOAT[384])
+LIMIT 5;
+
+SELECT text FROM vector_table
+ORDER BY array_distance(embedded_text, embed('Another question related to the file?')::FLOAT[384])
+LIMIT 5;
+```
+
+For more examples, check out the [examples folder](examples/).
+
+If building locally or calling from repo, you should use the -unsigned tag.
 ```shell
-duckdb -unsigned
+duckdb -unsigned 
 ```
 
 Features:
@@ -48,7 +65,7 @@ Features:
 Clone the repo with submodules
 
 ```shell
-git clone --recurse-submodules git@github.com:martin-conur/quackformers.git
+git clone git@github.com:martin-conur/quackformers.git
 ```
 
 ## Dependencies
@@ -130,13 +147,17 @@ This was resolved by using python 3.12
 
 Here are the planned features and improvements for **Quackformers**:
 
-1. **Faster Embedding Implementation**  
+1. **Faster Embedding Implementation** ✅  
    - Currently, embeddings are generated row by row. The goal is to implement a more efficient method to embed entire columns or chunks at once.
 
-2. **Jina Integration**  
+2. **Jina Integration** ✅  
    - Add support for Jina-based embedding functionality. This feature is currently a work in progress (WIP) and will be available soon.
 
-3. **Return Arrays Instead of Strings**  
+3. **Return Arrays Instead of Strings** ✅  
    - Modify the output format to return arrays directly instead of strings for better usability and performance.
 
-Stay tuned for updates as these features are implemented!
+All planned features have been implemented!
+
+## Open Discussion
+
+If you have ideas for custom embedding models or additional features you'd like to see in **Quackformers**, feel free to open a discussion or create an issue in the repository. We welcome your feedback and contributions!
