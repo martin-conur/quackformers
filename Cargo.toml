@@ -4,7 +4,7 @@ version = "0.1.1"
 edition = "2021"
 
 [package.metadata]
-maintainers = ["Martin Contreras <martincontrerasur@gmail.com"]
+maintainers = ["Martin Contreras <martincontrerasur@gmail.com>"]
 
 [lib]
 crate-type = ["cdylib"]
@@ -12,20 +12,23 @@ crate-type = ["cdylib"]
 [profile.release]
 lto = true
 strip = true
+codegen-units = 1
+opt-level = 3
 
 [[example]]
-# crate-type can't be (at the moment) be overriden for specific targets
-# src/wasm_lib.rs forwards to src/lib.rs so that we can change from cdylib
-# (that is needed while compiling natively) to staticlib (needed since the
-# actual linking will be done via emcc
 name = "quackformers"
 path = "src/wasm_lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]
-candle-core = "0.8.4"
-candle-nn = "0.8.4"
-candle-transformers = "0.8.4"
+accelerate-src = {version = "0.3.2", optional = true}
+intel-mkl-src = {version = "0.8.1", optional = true}
+
+# Base dependencies without specific backend
+candle-core = { version = "0.8.4" }
+candle-nn = { version = "0.8.4" }
+candle-transformers = { version = "0.8.4" }
+
 duckdb = { version = "1.2.2", features = [
     "vscalar",
     "vscalar-arrow",
@@ -33,7 +36,6 @@ duckdb = { version = "1.2.2", features = [
 ] }
 duckdb-loadable-macros = "0.1.5"
 hf-hub = { version = "0.4.2", default-features = false, features = ["rustls-tls", "ureq"] }
-intel-mkl-src = "0.8.1"
 libduckdb-sys = { version = "1.2.2", features = ["loadable-extension"] }
 serde = "1.0.219"
 serde_json = "1.0.140"
@@ -44,3 +46,20 @@ tokenizers = "0.13.2"
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = { version = "0.9", features = ["vendored"] }
 
+[features]
+# Backend selection features
+accelerate = [
+    "dep:accelerate-src",
+    "candle-core/accelerate",
+    "candle-nn/accelerate",
+    "candle-transformers/accelerate"
+]
+mkl = [
+    "dep:intel-mkl-src",
+    "candle-core/mkl",
+    "candle-nn/mkl",
+    "candle-transformers/mkl"
+]
+
+# Default is empty - will be selected by build.rs
+default = []

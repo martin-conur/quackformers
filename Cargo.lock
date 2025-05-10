@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "accelerate-src"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "415ed64958754dbe991900f3940677e6a7eefb4d7367afd70d642677b0c7d19d"
+
+[[package]]
 name = "addr2line"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -554,9 +560,12 @@ version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06ccf5ee3532e66868516d9b315f73aec9f34ea1a37ae98514534d458915dbf1"
 dependencies = [
+ "accelerate-src",
  "byteorder",
  "gemm 0.17.1",
  "half",
+ "intel-mkl-src",
+ "libc",
  "memmap2",
  "num-traits",
  "num_cpus",
@@ -576,8 +585,10 @@ version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1160c3b63f47d40d91110a3e1e1e566ae38edddbbf492a60b40ffc3bc1ff38"
 dependencies = [
+ "accelerate-src",
  "candle-core",
  "half",
+ "intel-mkl-src",
  "num-traits",
  "rayon",
  "safetensors",
@@ -591,10 +602,12 @@ version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94a0900d49f8605e0e7e6693a1f560e6271279de98e5fa369e7abf3aac245020"
 dependencies = [
+ "accelerate-src",
  "byteorder",
  "candle-core",
  "candle-nn",
  "fancy-regex",
+ "intel-mkl-src",
  "num-traits",
  "rand 0.9.0",
  "rayon",
@@ -2906,6 +2919,7 @@ dependencies = [
 name = "quackformers"
 version = "0.1.1"
 dependencies = [
+ "accelerate-src",
  "candle-core",
  "candle-nn",
  "candle-transformers",
