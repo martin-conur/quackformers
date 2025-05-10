@@ -420,13 +420,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "blas-sys"
-version = "0.7.1"
+name = "blas-src"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13b1b279ceb25d7c4faaea95a5f7addbe7d8c34f9462044bd8e630cebcfc2440"
-dependencies = [
- "libc",
-]
+checksum = "1d0100d9f97abc0a589f13eb0ff41500f8d012fb1c3472c0636fa3ed0c61c28b"
 
 [[package]]
 name = "block"
@@ -3048,7 +3045,7 @@ name = "quackformers"
 version = "0.1.2"
 dependencies = [
  "accelerate-src",
- "blas-sys",
+ "blas-src",
  "candle-core",
  "candle-nn",
  "candle-transformers",
