@@ -36,12 +36,20 @@ candle-nn            = { version = "0.8.4", default-features = false, features =
 candle-transformers  = { version = "0.8.4", default-features = false, features = ["accelerate","metal"] }
 accelerate-src       = "0.3.2"
 
+
 # Linux/Windows: use Intel MKL
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 candle-core          = { version = "0.8.4", default-features = false, features = ["mkl"] }
 candle-nn            = { version = "0.8.4", default-features = false, features = ["mkl"] }
 candle-transformers  = { version = "0.8.4", default-features = false, features = ["mkl"] }
-intel-mkl-src        = "0.8.1"
+# Bring in the raw MKL binaries
+intel-mkl-src       = { version = "0.8.1", default-features = false, features = [
+    # ⇨ static‐link MKL, LP64 interface, Intel OpenMP threading
+    "mkl-static-lp64-iomp"
+]}
+
+# Pull in the FFI symbols for cblas_* and the Netlib name-mangled entry points
+blas-sys            = { version = "0.7", default-features = false, features = ["intel-mkl"] }
 
 # OpenSSL for non-Windows
 [target.'cfg(not(target_os = "windows"))'.dependencies]
