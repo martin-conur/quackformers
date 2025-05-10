@@ -39,12 +39,9 @@ accelerate-src       = "0.3.2"
 
 # Linux/Windows: use Intel MKL
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-candle-core          = { version = "0.8.4", default-features = false, features = ["mkl"] }
-candle-nn            = { version = "0.8.4", default-features = false, features = ["mkl"] }
-candle-transformers  = { version = "0.8.4", default-features = false, features = ["mkl"] }
-intel-mkl-src        = "0.8.1"
-blas-src             = { version="0.11.1"}
-
+candle-core = { version = "0.8.4", default-features = false }
+candle-nn = { version = "0.8.4", default-features = false }
+candle-transformers = { version = "0.8.4", default-features = false }
 
 # OpenSSL for non-Windows
 [target.'cfg(not(target_os = "windows"))'.dependencies]
