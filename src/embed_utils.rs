@@ -126,7 +126,7 @@ pub trait Embed {
     ) -> Result<Vec<Vec<f32>>, EmbeddingError>;
 }
 
-pub trait EmbedModel {
+pub trait EmbedModel: Send + Sync {
     fn device(&self) -> &Device;
     fn forward(
         &self,

@@ -1,7 +1,7 @@
 LOAD 'build/release/quackformers.duckdb_extension';
 CREATE TEMP TABLE QUESTIONS(random_questions) AS
 VALUES
-    ('What is the capital of France?')
+    -- ('What is the capital of France?'),
     -- ('How does a car engine work?'),
     -- ('What is the tallest mountain in the world?'),
     -- ('How do airplanes stay in the air?'),
@@ -100,7 +100,10 @@ VALUES
     -- ('What is the process of making plastic?'),
     -- ('How do I learn to draw?'),
     -- ('What is the history of space exploration?'),
-    -- ('How does a battery store energy?')
+    ('How does a battery store energy?')
 ;
 
-SELECT embed_jina(RANDOM_QUESTIONS) embedded_questions FROM QUESTIONS;
+PRAGMA enable_profiling;
+
+SELECT embed_jina('THIS IS A SENTENCE') embedded_questions;
+SELECT embed_jina('THIS IS ANOTHER SENTENCE') embedded_questions;

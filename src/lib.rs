@@ -14,9 +14,10 @@ use duckdb_loadable_macros::duckdb_entrypoint_c_api;
 use libduckdb_sys::{duckdb_string_t, duckdb_string_t_data, duckdb_string_t_length};
 use std::error::Error;
 use std::slice;
-
+use once_cell::sync::Lazy;
 mod embed_utils;
 use embed_utils::{Embed, EmbeddingError, ModelType, TextEmbedder};
+use std::sync::Mutex;
 
 const DEVICE: Device = Device::Cpu;
 
@@ -36,15 +37,32 @@ fn process_strings(input_slice: &[duckdb_string_t]) -> Result<Vec<String>, Embed
         .collect::<Result<Vec<String>, EmbeddingError>>()
 }
 
-unsafe fn generic_embed_invoke<F>(
+/// Load & JIT once on first use:
+static BERT_EMBEDDER: Lazy<Mutex<TextEmbedder>> = Lazy::new(|| {
+    let mut embedder = ModelType::Bert(DEVICE)
+        .build_text_embedder()
+        .expect("failed to load BERT embedder");
+    // Warm up: do one dummy forward to JIT kernels
+    let dummy = ["hello world".to_string()].to_vec();
+    let _ = embedder.embed(dummy, /*batch_size=*/1);
+    Mutex::new(embedder)
+});
+
+static JINA_EMBEDDER: Lazy<Mutex<TextEmbedder>> = Lazy::new(|| {
+    let mut embedder = ModelType::Jina(DEVICE)
+        .build_text_embedder()
+        .expect("failed to load Jina embedder");
+    let dummy = ["hello world".to_string()].to_vec();
+    let _ = embedder.embed(dummy, /*batch_size=*/1);
+    Mutex::new(embedder)
+});
+
+
+unsafe fn generic_embed_invoke(
     input: &mut DataChunkHandle,
     output: &mut dyn WritableVector,
-    build_model_fn: F,
-) -> std::result::Result<(), Box<dyn std::error::Error>>
-where
-    F: FnOnce() -> Result<TextEmbedder, EmbeddingError>,
-{
-    // Extract the input word
+    use_jina: bool,
+) -> Result<(), Box<dyn Error>> {
     let input_vec = input.flat_vector(0);
     // slice of strings
     let input_slice = input_vec.as_slice_with_len::<duckdb_string_t>(input.len());
@@ -54,9 +72,15 @@ where
 
     // Bert embed
     let vect_phrases = process_strings(input_slice)?;
-    let mut model = build_model_fn()?;
-    let embedded_phrases = model.embed(vect_phrases, 32)?;
-
+    // choose the already-loaded embedder
+    let mut guard = if use_jina {
+        JINA_EMBEDDER.lock().unwrap()
+    } else {
+        BERT_EMBEDDER.lock().unwrap()
+    };
+    // now we have a `&mut TextEmbedder`
+    let embedded_phrases = guard.embed(vect_phrases, /*batch_size=*/32)?;
+    // …rest of your write-out logic…
     let total_len: usize = embedded_phrases.iter().map(|v| v.len()).sum();
     let mut child_vector = output_list_vector.child(total_len);
 
@@ -69,13 +93,12 @@ where
         output_list_vector.set_entry(i, offset, embedded_phrase.len());
 
         offset += embedded_phrase.len();
-        // let embedded_phrase_string = CString::new(format!("{:?}", embedded_phrase))?;
-        // output_flat_vector.insert(i, embedded_phrase_string);
     }
     output_list_vector.set_len(embedded_phrases.len());
 
     Ok(())
 }
+
 struct EmbedFunc;
 
 impl VScalar for EmbedFunc {
@@ -87,14 +110,11 @@ impl VScalar for EmbedFunc {
     /// - `output` must be a valid and writable WritableVector.
     /// - Caller (DuckDB) must guarantee input and output are valid for the duration of the call.
     unsafe fn invoke(
-        _state: &Self::State,
+        _state: &(),
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
-    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
-        // Extract the input word
-        generic_embed_invoke(input, output, || {
-            ModelType::Bert(DEVICE).build_text_embedder()
-        })
+    ) -> Result<(), Box<dyn Error>> {
+        generic_embed_invoke(input, output, /*use_jina=*/ false)
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -116,14 +136,11 @@ impl VScalar for EmbedJinaFunc {
     /// - `output` must be a valid and writable WritableVector.
     /// - Caller (DuckDB) must guarantee input and output are valid for the duration of the call.
     unsafe fn invoke(
-        _state: &Self::State,
+        _state: &(),
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
-    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
-        // Extract the input word
-        generic_embed_invoke(input, output, || {
-            ModelType::Jina(DEVICE).build_text_embedder()
-        })
+    ) -> Result<(), Box<dyn Error>> {
+        generic_embed_invoke(input, output, /*use_jina=*/ true)
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -143,6 +160,10 @@ const JINA_FUNCTION_NAME: &str = "embed_jina";
 /// The `Connection` must be a valid and open DuckDB connection provided by DuckDB.
 /// Caller must guarantee that DuckDB is properly initialized and not in an error state.
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
+    // Force the model + tokenizer to load & JIT right now,
+    // so the *very first* SQL call is fast.
+    Lazy::force(&BERT_EMBEDDER);
+    Lazy::force(&JINA_EMBEDDER);
     con.register_scalar_function::<EmbedFunc>(BERT_FUNCTION_NAME)
         .expect("Failed to register embed() function");
     con.register_scalar_function::<EmbedJinaFunc>(JINA_FUNCTION_NAME)
