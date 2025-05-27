@@ -10,9 +10,7 @@ app = FastAPI()
 con = duckdb.connect(config = {"allow_unsigned_extensions": "true"})
 
 # Load the Quackformers extension
-# To test locally
-# con.execute("LOAD '../../build/release/quackformers.duckdb_extension';")
-con.execute("INSTALL quackformers;")
+con.execute("FORCE INSTALL quackformers FROM community;")
 con.execute("LOAD quackformers;")
 
 
