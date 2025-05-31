@@ -22,9 +22,11 @@ use std::sync::Mutex;
 mod embed_utils;
 mod bedrock_utils;
 use embed_utils::{Embed, EmbeddingError, ModelType, TextEmbedder};
-use bedrock_utils::{embedrock, bedrock_invoke, BedrockConverseError, TitanResponse};
+use bedrock_utils::{embedrock, bedrock_invoke, BedrockConverseError, TitanResponse, FundationModel};
 use tokio::runtime::Runtime;
 use tracing_subscriber::FmtSubscriber;
+use std::ffi::CString;
+use duckdb::core::Inserter;
 
 static TRACING: OnceCell<()> = OnceCell::new();
 
@@ -34,7 +36,7 @@ const DEVICE: Device = Device::Cpu;
 const BERT_FUNCTION_NAME: &str = "embed";
 const JINA_FUNCTION_NAME: &str = "embed_jina";
 const BEDROCK_EMBEDDING_NAME: &str = "embedrock";
-const BEDROCK_INVOKE_NAME: &str = "bedrock_invoke";
+const BEDROCK_CHAT_NAME: &str = "bedrockchat";
 
 fn init_tracing() {
     TRACING.get_or_init(|| {
@@ -241,6 +243,64 @@ impl VScalar for EmbedRockFunc {
     }
 }
 
+async unsafe fn fm_bedrock_invoke(
+    input: &mut DataChunkHandle,
+    output: &mut dyn WritableVector,
+) -> Result<(), Box<dyn Error>> {
+    let input_vec = input.flat_vector(0);
+    // formatting and processing input
+    // slice of strings
+    let input_slice = input_vec.as_slice_with_len::<duckdb_string_t>(input.len());
+    let output_flat_vector = output.flat_vector();
+    // duckdb type to rust type
+    let vect_phrases = process_strings(input_slice)?;
+    
+    // FM: fundation model responses
+    let fm_futures = vect_phrases
+        .iter()
+        .map(|prompt| async {
+            let response: String = bedrock_invoke(prompt.as_str(), FundationModel::AmazonTitanTextExpressV1).await?;
+            Ok::<_, BedrockConverseError>(response)
+        });
+
+    let fm_responses: Vec<Result<String, BedrockConverseError>> = join_all(fm_futures).await;
+    let responses: Vec<String> = fm_responses
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (i, embedded_phrase) in responses.iter().enumerate() {
+            let embedded_phrase_string = CString::new(format!("{:?}", embedded_phrase))?;
+            output_flat_vector.insert(i, embedded_phrase_string);
+        }
+    Ok(())
+}
+
+struct BedrockChat;
+
+impl VScalar for BedrockChat {
+    type State = ();
+
+    /// # Safety
+    /// This function is called by DuckDB when executing the UDF (user-defined function).
+    /// - `input` must be a valid and initialized DataChunkHandle.
+    /// - `output` must be a valid and writable WritableVector.
+    /// - Caller (DuckDB) must guarantee input and output are valid for the duration of the call.
+    unsafe fn invoke(
+        _state: &(),
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        TOKIO.block_on(fm_bedrock_invoke(input, output))
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![LogicalTypeId::Varchar.into()],
+            LogicalTypeId::Varchar.into(),
+        )]
+    }
+}
+
 #[duckdb_entrypoint_c_api]
 /// # Safety
 /// This function must only be called by DuckDB's extension loader system.
@@ -257,6 +317,8 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_scalar_function::<EmbedJinaFunc>(JINA_FUNCTION_NAME)
         .expect("Failed to register embed_jina() function");
     con.register_scalar_function::<EmbedRockFunc>(BEDROCK_EMBEDDING_NAME)
-        .expect("Failed to register embed_jina() function");
+        .expect("Failed to register embedrock() function");
+    con.register_scalar_function::<BedrockChat>(BEDROCK_CHAT_NAME)
+        .expect("Failed to register bedrockchat() function");
     Ok(())
 }

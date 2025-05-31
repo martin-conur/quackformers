@@ -18,6 +18,11 @@ pub enum EmbeddingModel {
     AmazonTitanEmbedTextV1,
 }
 
+pub enum BedrockTask {
+    Embed,
+    Chat
+}
+
 const EMBEDDING_MODEL_ID: &str = "amazon.titan-embed-text-v1";
 const REGION: &str = "us-east-1";
 
@@ -77,6 +82,7 @@ pub async fn embedrock(message: &str) -> Result<TitanResponse, BedrockConverseEr
     let embeddings_prompt = json!({
         "inputText": message
     }).to_string();
+    // TODO: change the unwrap to proper error handling
     let embedding_response = client
         .invoke_model()
         .model_id(EMBEDDING_MODEL_ID)

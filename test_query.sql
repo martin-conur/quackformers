@@ -105,6 +105,8 @@ VALUES
 
 SELECT len(embedrock(random_questions)) from questions limit 10;
 
+SELECT bedrockchat('whats the capital of Australia?');
+
 -- PRAGMA enable_profiling;
 
 -- -- SELECT embed_jina('THIS IS A SENTENCE') embedded_questions;
