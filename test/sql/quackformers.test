@@ -26,4 +26,5 @@ SELECT len(embed_jina('this is a random sentence'));
 
 query I
 SELECT len(embedrock('this is a random sentence'));
+----
 1536
