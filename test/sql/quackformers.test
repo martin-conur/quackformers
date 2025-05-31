@@ -23,3 +23,7 @@ query I
 SELECT len(embed_jina('this is a random sentence'));
 ----
 768
+
+query I
+SELECT len(embedrock('this is a random sentence'));
+1536
