@@ -100,6 +100,28 @@ to the `build/debug` directory.
 
 To create optimized release binaries, simply run `make release` instead.
 
+## CI/CD Automatic Builds
+The repository is configured with GitHub Actions to automatically build extension binaries for multiple platforms on every push to the `main` branch.
+
+Built extensions are automatically stored in the `builds/` directory, organized by version and architecture:
+```
+builds/
+├── v1.3.2/
+│   ├── linux_amd64/
+│   ├── linux_arm64/
+│   ├── osx_amd64/
+│   ├── osx_arm64/
+│   └── windows_amd64/
+└── README.md
+```
+
+This means you can easily:
+- Access pre-built binaries for different platforms
+- Test extensions across architectures
+- Distribute binaries to users
+
+The CI workflow builds for all supported platforms except: `wasm_mvp`, `wasm_eh`, `wasm_threads`, `linux_amd64_musl`, and `windows_amd64_mingw`.
+
 ## Testing
 This extension uses the DuckDB Python client for testing. This should be automatically installed in the `make configure` step.
 The tests themselves are written in the SQLLogicTest format, just like most of DuckDB's tests. A sample test can be found in
@@ -114,25 +136,31 @@ or for the *release* build:
 make test_release
 ```
 
-### Version switching 
-Testing with different DuckDB versions is really simple:
+### Version switching
+Switching to different DuckDB versions is now automated with a single command:
 
-First, run 
+```shell
+make set-version VERSION=v1.4.0
 ```
+
+This command will automatically:
+- Update the `Makefile` (TARGET_DUCKDB_VERSION, DUCKDB_TEST_VERSION)
+- Update `Cargo.toml` (duckdb and libduckdb-sys dependencies)
+- Update `.github/workflows/MainDistributionPipeline.yml` (CI workflow versions)
+- Update `Cargo.lock` (via cargo update)
+
+After changing the version, rebuild and test:
+```shell
 make clean_all
-```
-to ensure the previous `make configure` step is deleted.
-
-Then, run 
-```
-DUCKDB_TEST_VERSION=v1.1.2 make configure
-```
-to select a different duckdb version to test with
-
-Finally, build and test with 
-```
+make configure
 make debug
 make test_debug
+```
+
+**Example**: To switch to DuckDB v1.3.2:
+```shell
+make set-version VERSION=v1.3.2
+make clean_all && make configure && make debug && make test_debug
 ```
 
 ### Known issues
