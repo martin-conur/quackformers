@@ -17,11 +17,10 @@ jobs:
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.3.2
     with:
       duckdb_version: v1.3.2
-      ci_tools_version: main
+      ci_tools_version: v1.3.2
       extension_name: quackformers
       extra_toolchains: rust;python3
       exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;linux_amd64_musl;windows_amd64_mingw'
-      reduced_ci_mode: 'disabled'
 
   store-builds:
     name: Store builds in repository
