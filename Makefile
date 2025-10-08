@@ -9,8 +9,8 @@ EXTENSION_NAME=quackformers
 USE_UNSTABLE_C_API=1
 
 # Target DuckDB version
-TARGET_DUCKDB_VERSION=v1.2.2
-DUCKDB_TEST_VERSION=1.2.2
+TARGET_DUCKDB_VERSION=v1.3.2
+DUCKDB_TEST_VERSION=1.3.2
 
 all: configure debug
 
@@ -29,3 +29,13 @@ test_release: test_extension_release
 
 clean: clean_build clean_rust
 clean_all: clean_configure clean
+
+# Set DuckDB version across all configuration files
+set-version:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Error: VERSION not specified"; \
+		echo "Usage: make set-version VERSION=v1.4.0"; \
+		exit 1; \
+	fi
+	@chmod +x set_duckdb_version.sh
+	@./set_duckdb_version.sh $(VERSION)

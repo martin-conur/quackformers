@@ -105,5 +105,5 @@ VALUES
 
 PRAGMA enable_profiling;
 
-SELECT embed_jina('THIS IS A SENTENCE') embedded_questions;
-SELECT embed_jina('THIS IS ANOTHER SENTENCE') embedded_questions;
+SELECT embed(random_questions) from questions;
+SELECT embed('THIS IS ANOTHER SENTENCE');
