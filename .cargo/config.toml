@@ -10,5 +10,7 @@ rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-static-libgcc"
 OPENSSL_STATIC = "1"
 OPENSSL_DIR = ""
 
+# Note: target-cpu=native removed due to ring crate ARM Darwin build issues
+# See: https://github.com/briansmith/ring/issues/2145
 [build]
-rustflags = ["-C", "target-cpu=native"]
+# rustflags = ["-C", "target-cpu=native"]
