@@ -65,7 +65,7 @@ Features:
 Clone the repo with submodules
 
 ```shell
-git clone git@github.com:martin-conur/quackformers.git
+git clone --recurse-submodules git@github.com:martin-conur/quackformers.git
 ```
 
 ## Dependencies
