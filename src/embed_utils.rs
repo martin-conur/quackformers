@@ -4,6 +4,7 @@ use candle_transformers::models::bert::{
     BertModel, Config, HiddenAct, PositionEmbeddingType, DTYPE,
 };
 use hf_hub::{api::sync::Api, Repo, RepoType};
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tokenizers::{PaddingParams, Tokenizer};
 mod jina_implementation;
@@ -90,20 +91,57 @@ impl ModelType {
         }
     }
 
+    fn get_local_model_path(&self) -> Option<PathBuf> {
+        match &self {
+            Self::Bert(_) => std::env::var("BERT_MODEL_FOLDER").ok().map(PathBuf::from),
+            Self::Jina(_) => std::env::var("JINA_MODEL_FOLDER").ok().map(PathBuf::from),
+        }
+    }
+
+    fn load_from_local(&self, local_path: &Path) -> Result<(PathBuf, PathBuf), EmbeddingError> {
+        let tokenizer_path = local_path.join("tokenizer.json");
+        let weights_path = local_path.join("model.safetensors");
+
+        if !tokenizer_path.exists() {
+            return Err(EmbeddingError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Tokenizer file not found at {:?}", tokenizer_path),
+            )));
+        }
+
+        if !weights_path.exists() {
+            return Err(EmbeddingError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Model weights file not found at {:?}", weights_path),
+            )));
+        }
+
+        Ok((tokenizer_path, weights_path))
+    }
+
+    fn load_from_hub(&self) -> Result<(PathBuf, PathBuf), EmbeddingError> {
+        let model_id = self.get_model_id();
+        let repo = Repo::new(model_id, RepoType::Model);
+        let api = Api::new()?;
+        let api = api.repo(repo);
+        let tokenizer = api.get("tokenizer.json")?;
+        let weights = api.get("model.safetensors")?;
+        Ok((tokenizer, weights))
+    }
+
     pub fn build_text_embedder(&self) -> Result<TextEmbedder, EmbeddingError> {
         let device = match &self {
             Self::Bert(device) => device,
             Self::Jina(device) => device,
         };
-        let model_id = self.get_model_id();
-        let repo = Repo::new(model_id, RepoType::Model);
-        let (tokenizer_filename, weights_filename) = {
-            let api = Api::new()?;
-            let api = api.repo(repo);
-            let tokenizer = api.get("tokenizer.json")?;
-            let weights = api.get("model.safetensors")?;
-            (tokenizer, weights)
+
+        // Try to load from local path first, fall back to HuggingFace Hub
+        let (tokenizer_filename, weights_filename) = if let Some(local_path) = self.get_local_model_path() {
+            self.load_from_local(&local_path)?
+        } else {
+            self.load_from_hub()?
         };
+
         let tokenizer = Tokenizer::from_file(tokenizer_filename)?;
 
         let vb =
