@@ -204,6 +204,25 @@ Here are the planned features and improvements for **Quackformers**:
    - [ ] Markdown (`.md`)
    - [ ] PDF (`.pdf`)
 
+5. **Dynamic Device Selection (Metal / CPU)**  
+   Automatically use Metal GPU on macOS and fall back to CPU on any other platform or if GPU init fails — with no configuration required. Jina benefits most from this due to its larger matrix sizes, but all embedding functions gain it automatically.
+
+6. **New Embedding Models**  
+   Expand beyond the current BERT (MiniLM) and Jina models across three categories:
+
+   - **Faster / better English** — drop-in BERT-architecture models with significantly better quality at the same speed and size as MiniLM:
+     - [ ] `BAAI/bge-small-en-v1.5` (384 dims)
+     - [ ] `thenlper/gte-small` (384 dims)
+     - [ ] `jinaai/jina-embeddings-v2-small-en` — faster Jina, same architecture already implemented
+
+   - **Modern architectures** — newer model designs with longer context and better benchmarks:
+     - [ ] ModernBERT (`answerdotai/ModernBERT-base`) — RoPE positional embeddings, 8192 token context, trained on 2T tokens, Candle support available
+     - [ ] `nomic-ai/nomic-embed-text-v1.5` — Matryoshka embeddings (truncatable to 768/512/256/128 dims)
+
+   - **Multilingual**:
+     - [ ] `intfloat/multilingual-e5-small` — 100+ languages, BERT architecture (drop-in)
+     - [ ] `BAAI/bge-m3` — 100+ languages, 8192 context, dense + sparse + multi-vector retrieval modes
+
 ## Open Discussion
 
 If you have ideas for custom embedding models or additional features you'd like to see in **Quackformers**, feel free to open a discussion or create an issue in the repository. We welcome your feedback and contributions!
