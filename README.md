@@ -184,7 +184,25 @@ Here are the planned features and improvements for **Quackformers**:
 3. **Return Arrays Instead of Strings** ✅  
    - Modify the output format to return arrays directly instead of strings for better usability and performance.
 
-All planned features have been implemented!
+4. **Document Splitting Functions**  
+   Two table-valued functions for splitting text into chunks, designed to compose naturally with `embed()`:
+
+   - **`split(text)`** — splits raw text coming from any source (a column, a subquery, another process):
+     ```sql
+     SELECT embed(chunk_text) FROM split(my_raw_text_column, chunk_size => 256);
+     ```
+
+   - **`read_split(path)`** — reads a file from disk and splits it in one step:
+     ```sql
+     SELECT embed(chunk_text) FROM read_split('docs/readme.md');
+     ```
+
+   Both return: `chunk_index`, `chunk_text`, `source`
+
+   Supported formats:
+   - [ ] Plain text (`.txt`)
+   - [ ] Markdown (`.md`)
+   - [ ] PDF (`.pdf`)
 
 ## Open Discussion
 
