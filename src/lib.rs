@@ -109,12 +109,12 @@ impl VScalar for EmbedFunc {
     /// - `input` must be a valid and initialized DataChunkHandle.
     /// - `output` must be a valid and writable WritableVector.
     /// - Caller (DuckDB) must guarantee input and output are valid for the duration of the call.
-    unsafe fn invoke(
+    fn invoke(
         _state: &(),
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        generic_embed_invoke(input, output, /*use_jina=*/ false)
+        unsafe { generic_embed_invoke(input, output, /*use_jina=*/ false) }
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -135,12 +135,12 @@ impl VScalar for EmbedJinaFunc {
     /// - `input` must be a valid and initialized DataChunkHandle.
     /// - `output` must be a valid and writable WritableVector.
     /// - Caller (DuckDB) must guarantee input and output are valid for the duration of the call.
-    unsafe fn invoke(
+    fn invoke(
         _state: &(),
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        generic_embed_invoke(input, output, /*use_jina=*/ true)
+        unsafe { generic_embed_invoke(input, output, /*use_jina=*/ true) }
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
