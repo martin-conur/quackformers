@@ -34,7 +34,15 @@ fi
 # Remove 'v' prefix for versions that don't use it
 VERSION_NO_V=${VERSION#v}
 
-echo "🔄 Updating DuckDB version to ${VERSION}..."
+# Compute the duckdb-rs / libduckdb-sys encoded crate version.
+# The crate does NOT use the plain DuckDB version. It encodes it as:
+#   crate = 1.{major*10000 + minor*100 + patch}.0
+# e.g. DuckDB 1.5.2 -> 1.10502.0, DuckDB 1.5.4 -> 1.10504.0
+IFS='.' read -r DDB_MAJOR DDB_MINOR DDB_PATCH <<< "$VERSION_NO_V"
+CRATE_MINOR=$((DDB_MAJOR * 10000 + DDB_MINOR * 100 + DDB_PATCH))
+CRATE_VERSION="1.${CRATE_MINOR}.0"
+
+echo "🔄 Updating DuckDB version to ${VERSION} (crate version ${CRATE_VERSION})..."
 echo ""
 
 # Check if we're in the project root
@@ -47,8 +55,7 @@ fi
 update_file() {
     local file=$1
     local pattern=$2
-    local replacement=$3
-    local desc=$4
+    local desc=$3
 
     if [ -f "$file" ]; then
         # Use different sed syntax for macOS vs Linux
@@ -74,13 +81,18 @@ update_file "Makefile" \
     "DUCKDB_TEST_VERSION"
 
 # 2. Update Cargo.toml
+# Pin exactly (=) so the caret range does not silently float to a newer
+# DuckDB minor/patch. The patterns tolerate the column-aligned whitespace
+# in Cargo.toml by matching any run of spaces before '= { version ='.
+# '^duckdb[[:space:]]' avoids matching 'libduckdb-sys' and
+# 'duckdb-loadable-macros' (neither is followed by whitespace after 'duckdb').
 echo "📝 Updating Cargo.toml..."
 update_file "Cargo.toml" \
-    "s/duckdb = { version = \"[^\"]*\"/duckdb = { version = \"${VERSION_NO_V}\"/" \
+    "s/^\(duckdb[[:space:]]*= { version = \)\"[^\"]*\"/\1\"=${CRATE_VERSION}\"/" \
     "duckdb dependency"
 
 update_file "Cargo.toml" \
-    "s/libduckdb-sys = { version = \"[^\"]*\"/libduckdb-sys = { version = \"${VERSION_NO_V}\"/" \
+    "s/^\(libduckdb-sys[[:space:]]*= { version = \)\"[^\"]*\"/\1\"=${CRATE_VERSION}\"/" \
     "libduckdb-sys dependency"
 
 # 3. Update GitHub Actions workflow
