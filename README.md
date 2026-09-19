@@ -6,11 +6,8 @@
 LOAD 'build/debug/quackformers.duckdb_extension'; -- IF BUILDING LOCALLY
 
 -- IMPORTING FROM DUCKDB COMMUNITY
-INSTALL quackformers fROM  community;
+INSTALL quackformers FROM community;
 LOAD quackformers;
-
--- IMPORTING FROM GITHUB REPO
-LOAD quackformers FROM 'https://github.com/martin-conur/quackformers';
 
 CREATE TEMP TABLE QUESTIONS(random_questions) AS
 VALUES
@@ -27,7 +24,7 @@ SELECT embed(RANDOM_QUESTIONS)::FLOAT[384] embedded_questions FROM QUESTIONS;
 ### Example: RAG with Just DUCKDB
 
 ```sql
-INSTALL quackformers FROM  community;
+INSTALL quackformers FROM community;
 LOAD quackformers;
 
 INSTALL vss;
@@ -100,27 +97,22 @@ to the `build/debug` directory.
 
 To create optimized release binaries, simply run `make release` instead.
 
-## CI/CD Automatic Builds
-The repository is configured with GitHub Actions to automatically build extension binaries for multiple platforms on every push to the `main` branch.
+## CI/CD
 
-Built extensions are automatically stored in the `builds/` directory, organized by version and architecture:
-```
-builds/
-├── v1.3.2/
-│   ├── linux_amd64/
-│   ├── linux_arm64/
-│   ├── osx_amd64/
-│   ├── osx_arm64/
-│   └── windows_amd64/
-└── README.md
-```
+GitHub Actions builds the extension for every supported platform on pushes to
+`main` and `v2`, and on every pull request. Documentation-only changes are
+skipped.
 
-This means you can easily:
-- Access pre-built binaries for different platforms
-- Test extensions across architectures
-- Distribute binaries to users
+**Built:** `linux_amd64`, `linux_arm64`, `osx_amd64`, `osx_arm64`, `windows_amd64`.
 
-The CI workflow builds for all supported platforms except: `wasm_mvp`, `wasm_eh`, `wasm_threads`, `linux_amd64_musl`, and `windows_amd64_mingw`.
+**Not built:** `wasm_mvp`, `wasm_eh`, `wasm_threads`, `linux_amd64_musl`,
+`windows_amd64_mingw`. WASM is excluded deliberately — see [#72](https://github.com/martin-conur/quackformers/issues/72)
+for the blockers.
+
+Per-run binaries can be downloaded from the workflow run's artifacts. Released
+binaries are distributed through the DuckDB community extensions repository
+(`INSTALL quackformers FROM community`). Local builds land in `build/debug` and
+`build/release`.
 
 ## Testing
 This extension uses the DuckDB Python client for testing. This should be automatically installed in the `make configure` step.
@@ -173,55 +165,30 @@ This was resolved by using python 3.12
 
 ## Roadmap
 
-Here are the planned features and improvements for **Quackformers**:
+Planned work is tracked on the [quackformers v2 board](https://github.com/users/martin-conur/projects/5):
 
-1. **Faster Embedding Implementation** ✅  
-   - Currently, embeddings are generated row by row. The goal is to implement a more efficient method to embed entire columns or chunks at once.
+| Milestone | Theme |
+|---|---|
+| [1.6.0](https://github.com/martin-conur/quackformers/milestone/1) | Correctness and load behaviour, plus `embed_bge()` and `embed_multilingual()` |
+| [1.7.0](https://github.com/martin-conur/quackformers/milestone/2) | Migration to DuckDB 2.0's stable V2 C API |
+| [1.8.0](https://github.com/martin-conur/quackformers/milestone/3) | `token_count()`, `split_text()`, `embed_models()`, settings, Metal opt-in |
+| [2.0.0](https://github.com/martin-conur/quackformers/milestone/4) | Breaking: new default model, unified `embed(text, model := ...)` dispatch |
 
-2. **Jina Integration** ✅  
-   - Add support for Jina-based embedding functionality. This feature is currently a work in progress (WIP) and will be available soon.
+Longer term: a cross-encoder `rerank()`, late chunking, and quantised outputs.
 
-3. **Return Arrays Instead of Strings** ✅  
-   - Modify the output format to return arrays directly instead of strings for better usability and performance.
+**On document splitting.** An earlier plan called for a `read_split(path)` table
+function. That is superseded by a scalar `split_text()` consumed with `UNNEST`:
+DuckDB table functions cannot take a correlated column as an argument, and
+`split_text()` already composes with DuckDB's own file reader, which handles
+path resolution, globs and remote filesystems for free.
 
-4. **Document Splitting Functions**  
-   Two table-valued functions for splitting text into chunks, designed to compose naturally with `embed()`:
+```sql
+SELECT u.chunk_index, embed(u.chunk_text)
+FROM docs, UNNEST(split_text(docs.body, chunk_size := 256)) AS u;
 
-   - **`split(text)`** — splits raw text coming from any source (a column, a subquery, another process):
-     ```sql
-     SELECT embed(chunk_text) FROM split(my_raw_text_column, chunk_size => 256);
-     ```
-
-   - **`read_split(path)`** — reads a file from disk and splits it in one step:
-     ```sql
-     SELECT embed(chunk_text) FROM read_split('docs/readme.md');
-     ```
-
-   Both return: `chunk_index`, `chunk_text`, `source`
-
-   Supported formats:
-   - [ ] Plain text (`.txt`)
-   - [ ] Markdown (`.md`)
-   - [ ] PDF (`.pdf`)
-
-5. **Dynamic Device Selection (Metal / CPU)**  
-   Automatically use Metal GPU on macOS and fall back to CPU on any other platform or if GPU init fails — with no configuration required. Jina benefits most from this due to its larger matrix sizes, but all embedding functions gain it automatically.
-
-6. **New Embedding Models**  
-   Expand beyond the current BERT (MiniLM) and Jina models across three categories:
-
-   - **Faster / better English** — drop-in BERT-architecture models with significantly better quality at the same speed and size as MiniLM:
-     - [ ] `BAAI/bge-small-en-v1.5` (384 dims)
-     - [ ] `thenlper/gte-small` (384 dims)
-     - [ ] `jinaai/jina-embeddings-v2-small-en` — faster Jina, same architecture already implemented
-
-   - **Modern architectures** — newer model designs with longer context and better benchmarks:
-     - [ ] ModernBERT (`answerdotai/ModernBERT-base`) — RoPE positional embeddings, 8192 token context, trained on 2T tokens, Candle support available
-     - [ ] `nomic-ai/nomic-embed-text-v1.5` — Matryoshka embeddings (truncatable to 768/512/256/128 dims)
-
-   - **Multilingual**:
-     - [ ] `intfloat/multilingual-e5-small` — 100+ languages, BERT architecture (drop-in)
-     - [ ] `BAAI/bge-m3` — 100+ languages, 8192 context, dense + sparse + multi-vector retrieval modes
+-- from a file, no dedicated reader needed
+SELECT u.chunk_text FROM UNNEST(split_text(read_text('docs/readme.md'))) AS u;
+```
 
 ## Open Discussion
 
