@@ -298,12 +298,9 @@ mod tests {
             _token_type_ids: &Tensor,
             _attention_mask: Option<&Tensor>,
         ) -> Result<Tensor, EmbeddingError> {
-            let dims = input_ids.dims();
-            Ok(Tensor::zeros(
-                (dims[0], dims[1], 1),
-                DType::F32,
-                &self.device,
-            )?)
+            let input_ids = input_ids.to_dtype(DType::F32)?.unsqueeze(2)?;
+            let squared_input_ids = input_ids.sqr()?;
+            Ok(Tensor::cat(&[&input_ids, &squared_input_ids], 2)?)
         }
     }
 
@@ -319,7 +316,7 @@ mod tests {
             .build()
             .unwrap();
         let mut tokenizer = Tokenizer::new(model);
-        tokenizer.with_pre_tokenizer(Whitespace::default());
+        tokenizer.with_pre_tokenizer(Whitespace);
         configure_batch_padding(&mut tokenizer);
 
         TextEmbedder {
@@ -333,17 +330,27 @@ mod tests {
     #[test]
     fn shared_embedder_supports_concurrent_calls() {
         let embedder = Arc::new(test_embedder());
-        let handles = (0..2)
-            .map(|_| {
-                let embedder = Arc::clone(&embedder);
-                thread::spawn(move || embedder.embed(vec!["hello world".into()], 1))
+        let handles = [
+            ("hello", [0.70710677, 0.70710677]),
+            ("world", [0.4472136, 0.8944272]),
+        ]
+        .into_iter()
+        .map(|(text, expected)| {
+            let embedder = Arc::clone(&embedder);
+            thread::spawn(move || {
+                let embeddings = embedder.embed(vec![text.into()], 1).unwrap();
+                (embeddings, expected)
             })
-            .collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
         for handle in handles {
-            let embeddings = handle.join().unwrap().unwrap();
+            let (embeddings, expected) = handle.join().unwrap();
             assert_eq!(embeddings.len(), 1);
-            assert_eq!(embeddings[0].len(), 1);
+            assert_eq!(embeddings[0].len(), expected.len());
+            for (actual, expected) in embeddings[0].iter().zip(expected) {
+                assert!((actual - expected).abs() < 1e-5);
+            }
         }
     }
 }
