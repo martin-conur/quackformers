@@ -12,11 +12,11 @@ use duckdb::{
 };
 use duckdb_loadable_macros::duckdb_entrypoint_c_api;
 use libduckdb_sys::{duckdb_string_t, duckdb_string_t_data, duckdb_string_t_length};
+use once_cell::sync::Lazy;
 use std::error::Error;
 use std::slice;
-use once_cell::sync::Lazy;
 mod embed_utils;
-use embed_utils::{Embed, EmbeddingError, ModelType, TextEmbedder};
+use embed_utils::{Embed, ModelType, TextEmbedder};
 use std::sync::Mutex;
 
 const DEVICE: Device = Device::Cpu;
@@ -30,13 +30,6 @@ fn duckdb_string_to_owned_string(word: &duckdb_string_t) -> String {
     }
 }
 
-fn process_strings(input_slice: &[duckdb_string_t]) -> Result<Vec<String>, EmbeddingError> {
-    input_slice
-        .iter()
-        .map(|word| Ok(duckdb_string_to_owned_string(word)))
-        .collect::<Result<Vec<String>, EmbeddingError>>()
-}
-
 /// Load & JIT once on first use:
 static BERT_EMBEDDER: Lazy<Mutex<TextEmbedder>> = Lazy::new(|| {
     let mut embedder = ModelType::Bert(DEVICE)
@@ -44,7 +37,7 @@ static BERT_EMBEDDER: Lazy<Mutex<TextEmbedder>> = Lazy::new(|| {
         .expect("failed to load BERT embedder");
     // Warm up: do one dummy forward to JIT kernels
     let dummy = ["hello world".to_string()].to_vec();
-    let _ = embedder.embed(dummy, /*batch_size=*/1);
+    let _ = embedder.embed(dummy, /*batch_size=*/ 1);
     Mutex::new(embedder)
 });
 
@@ -53,10 +46,9 @@ static JINA_EMBEDDER: Lazy<Mutex<TextEmbedder>> = Lazy::new(|| {
         .build_text_embedder()
         .expect("failed to load Jina embedder");
     let dummy = ["hello world".to_string()].to_vec();
-    let _ = embedder.embed(dummy, /*batch_size=*/1);
+    let _ = embedder.embed(dummy, /*batch_size=*/ 1);
     Mutex::new(embedder)
 });
-
 
 unsafe fn generic_embed_invoke(
     input: &mut DataChunkHandle,
@@ -70,8 +62,17 @@ unsafe fn generic_embed_invoke(
     // let output_flat_vector = output.flat_vector();
     let mut output_list_vector = output.list_vector();
 
-    // Bert embed
-    let vect_phrases = process_strings(input_slice)?;
+    // here we'll track the not-null rows
+    let mut texts: Vec<String> = Vec::with_capacity(input.len());
+    let mut rows: Vec<usize> = Vec::with_capacity(input.len());
+
+    for row in 0..input.len() {
+        if input_vec.try_row_is_null(row as u64)? {
+            continue;
+        }
+        texts.push(duckdb_string_to_owned_string(&input_slice[row]));
+        rows.push(row);
+    }
     // choose the already-loaded embedder
     let mut guard = if use_jina {
         JINA_EMBEDDER.lock().unwrap()
@@ -79,22 +80,32 @@ unsafe fn generic_embed_invoke(
         BERT_EMBEDDER.lock().unwrap()
     };
     // now we have a `&mut TextEmbedder`
-    let embedded_phrases = guard.embed(vect_phrases, /*batch_size=*/32)?;
-    // …rest of your write-out logic…
+    let embedded_phrases = guard.embed(texts, /*batch_size=*/ 32)?;
     let total_len: usize = embedded_phrases.iter().map(|v| v.len()).sum();
     let mut child_vector = output_list_vector.child(total_len);
 
+    // put the not null rows in the output vector with the right entry index (what we tracked in texts and rows)
     let mut offset = 0;
     for (i, embedded_phrase) in embedded_phrases.iter().enumerate() {
+        let row = rows[i];
         child_vector.as_mut_slice_with_len(offset + embedded_phrase.len())
             [offset..offset + embedded_phrase.len()]
             .copy_from_slice(embedded_phrase);
 
-        output_list_vector.set_entry(i, offset, embedded_phrase.len());
+        output_list_vector.set_entry(row, offset, embedded_phrase.len());
 
         offset += embedded_phrase.len();
     }
-    output_list_vector.set_len(embedded_phrases.len());
+
+    // a seconds for loop that will set to null entries with null rows
+    for row in 0..input.len() {
+        if input_vec.try_row_is_null(row as u64)? {
+            output_list_vector.set_entry(row, 0, 0);
+            output_list_vector.set_null(row);
+        }
+    }
+
+    output_list_vector.set_len(input.len());
 
     Ok(())
 }
@@ -114,7 +125,9 @@ impl VScalar for EmbedFunc {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        unsafe { generic_embed_invoke(input, output, /*use_jina=*/ false) }
+        unsafe {
+            generic_embed_invoke(input, output, /*use_jina=*/ false)
+        }
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -140,7 +153,9 @@ impl VScalar for EmbedJinaFunc {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        unsafe { generic_embed_invoke(input, output, /*use_jina=*/ true) }
+        unsafe {
+            generic_embed_invoke(input, output, /*use_jina=*/ true)
+        }
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {

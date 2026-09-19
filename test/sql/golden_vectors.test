@@ -221,8 +221,6 @@ mode unskip
 #                            yields a garbage 384-float vector instead of NULL.
 #                            This is the one the fix must turn green.
 # ---------------------------------------------------------------------------
-mode skip
-
 # 1. NULL propagates.
 query I
 SELECT count(*) FROM (SELECT embed(NULL) AS v) WHERE v IS NOT NULL;
@@ -267,4 +265,39 @@ WHERE (id = 'b') <> (embed(t) IS NULL)
 ORDER BY id;
 ----
 
-mode unskip
+# 4. Position of the NULL must not matter.
+#
+# Query 2 only covers a NULL in the MIDDLE. A trailing NULL is what catches a
+# short set_len -- the list reports fewer rows than the chunk holds and the
+# last row silently disappears. A leading NULL catches the mirror case.
+query II
+SELECT count(*), count(v)
+FROM (SELECT embed(t) AS v FROM (VALUES ('a'), ('b'), (NULL)) s(t));
+----
+3	2
+
+query II
+SELECT count(*), count(v)
+FROM (SELECT embed(t) AS v FROM (VALUES (NULL), ('b'), ('c')) s(t));
+----
+3	2
+
+# 5. Every row NULL.
+#
+# Exercises the degenerate path: texts is empty, total_len is 0, and the child
+# vector is reserved with child(0).
+query II
+SELECT count(*), count(v) FROM (SELECT embed(NULL) AS v FROM range(5));
+----
+5	0
+
+# 6. Empty string is not NULL.
+#
+# '' tokenises to [CLS] [SEP] -- two real, unmasked tokens -- so it is a valid
+# input with a real embedding, not a degenerate case. Guards against a fix that
+# conflates "empty" with "absent".
+query I
+SELECT count(*) FROM (SELECT embed('') AS v) WHERE v IS NULL OR len(v) <> 384;
+----
+0
+
