@@ -1,0 +1,211 @@
+# name: test/sql/golden_vectors.test
+# description: Golden-vector regression suite -- asserts embedding VALUES, not just shapes
+# group: [quack]
+#
+# Generated with Claude. Human-reviewed before merge -- see CONTRIBUTING.md.
+#
+# References come from scripts/gen_golden_vectors.py (sentence-transformers,
+# pinned). Regenerate deliberately, never incidentally.
+#
+# Every assertion below returns ZERO ROWS on success. Two reasons:
+#   1. sqllogictest compares text representations, so asserting on raw floats
+#      is brittle -- a last-digit difference fails with a useless message.
+#   2. On failure the runner prints the actual rows, so the failure message
+#      names exactly which model and case broke, and by how much.
+#
+# ::FLOAT[] on every embed() result is deliberate: a no-op on today's LIST
+# return type, a cast once #36 makes it a fixed-size ARRAY. Keeps this file
+# working across that change.
+
+require quackformers
+
+# ============================================================================
+# Fixture
+# ============================================================================
+
+statement ok
+CREATE TEMP TABLE golden AS
+SELECT model, case_id, n_tokens, text, CAST(vector AS FLOAT[]) AS ref
+FROM read_csv('test/golden/golden_vectors.csv', header = true);
+
+query I
+SELECT count(*) FROM golden;
+----
+16
+
+query I
+SELECT count(*) FROM golden
+WHERE (model = 'minilm' AND len(ref) <> 384)
+   OR (model = 'jina'   AND len(ref) <> 768);
+----
+0
+
+# ============================================================================
+# embed() / MiniLM, inputs within the effective truncation limit
+#
+# candle's BertModel honours the attention mask, so MiniLM is batch-invariant:
+# these were verified identical whether embedded alone or batched together.
+#
+# This is the regression guard for #32, #37 and #38, all of which claim not to
+# change output.
+#
+# The 128-token cutoff is NOT arbitrary -- see the skipped block below.
+# ============================================================================
+
+query TTR
+SELECT model, case_id, list_cosine_similarity(embed(text)::FLOAT[], ref) AS sim
+FROM golden
+WHERE model = 'minilm' AND n_tokens <= 128
+  AND list_cosine_similarity(embed(text)::FLOAT[], ref) < 0.9999
+ORDER BY case_id;
+----
+
+# Empty string is not a degenerate case: it tokenises to [CLS] [SEP], both
+# unmasked, so the mean-pool divisor is 2 and the result is a valid unit
+# vector. Guards against a regression to NaN if pooling changes in #40.
+query TI
+SELECT case_id, len(embed(text)::FLOAT[])
+FROM golden
+WHERE model = 'minilm' AND case_id = 'empty'
+  AND len(list_filter(embed(text)::FLOAT[], x -> NOT isfinite(x))) > 0;
+----
+
+# ============================================================================
+# KNOWN FAILURES -- each unskips when its issue lands
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# #34 -- MiniLM silently truncates at 128 tokens.
+#
+# all-MiniLM-L6-v2's tokenizer.json bakes in truncation at max_length 128, and
+# Tokenizer::from_file honours it. sentence_bert_config.json declares
+# max_seq_length 256, which is what sentence-transformers actually uses.
+#
+# So any input over 128 tokens silently disagrees with the rest of the
+# ecosystem. Measured: cosine to the reference flatlines at 0.95995 from ~128
+# tokens onward -- additional text is simply discarded.
+#
+# It went unnoticed because embed_utils.rs:216-224 overrides `padding`
+# (Fixed:128 -> BatchLongest) but never touches `truncation`.
+#
+# Unskip when #34 sets MiniLM truncation explicitly to 256. Note this is a
+# vector-change: output moves for every input over 128 tokens.
+# ---------------------------------------------------------------------------
+mode skip
+
+query TTR
+SELECT model, case_id, list_cosine_similarity(embed(text)::FLOAT[], ref) AS sim
+FROM golden
+WHERE model = 'minilm' AND n_tokens > 128
+  AND list_cosine_similarity(embed(text)::FLOAT[], ref) < 0.9999
+ORDER BY case_id;
+----
+
+mode unskip
+
+# ---------------------------------------------------------------------------
+# #33 -- embed_jina() ignores the attention mask.
+#
+# Pad tokens carry a real embedding and real tokens attend to them, so a row's
+# vector depends on which rows shared its batch. DuckDB hands all these rows to
+# one invoke() call, so every short row here is contaminated by the longest.
+#
+# Unskip when #33 lands. The diff on the fixture is the release-note evidence.
+# ---------------------------------------------------------------------------
+mode skip
+
+query TTR
+SELECT model, case_id, list_cosine_similarity(embed_jina(text)::FLOAT[], ref) AS sim
+FROM golden
+WHERE model = 'jina' AND n_tokens <= 512
+  AND list_cosine_similarity(embed_jina(text)::FLOAT[], ref) < 0.9999
+ORDER BY case_id;
+----
+
+mode unskip
+
+# ---------------------------------------------------------------------------
+# #33 -- batch-composition invariance, stated explicitly.
+#
+# The fixture was generated with batch_size=1, so every reference vector is an
+# isolated embedding with no padding anywhere. Embedding batch_short alongside
+# batch_long and comparing against that reference IS the invariance test.
+#
+# Overlaps the block above but is the clearest statement of the invariant: a
+# row's vector must not depend on its neighbours. Deleting THIS mode skip is
+# the acceptance criterion for #33.
+# ---------------------------------------------------------------------------
+mode skip
+
+query TR
+WITH batched AS (
+  SELECT case_id, embed_jina(text)::FLOAT[] AS v
+  FROM golden
+  WHERE model = 'jina' AND case_id IN ('batch_short', 'batch_long')
+)
+SELECT b.case_id, list_cosine_similarity(b.v, g.ref) AS sim
+FROM batched b
+JOIN golden g ON g.model = 'jina' AND g.case_id = b.case_id
+WHERE list_cosine_similarity(b.v, g.ref) < 0.99999
+ORDER BY b.case_id;
+----
+
+mode unskip
+
+# ---------------------------------------------------------------------------
+# #33 + #34 -- Jina inputs over the 512-token limit.
+#
+# Jina's tokenizer.json sets truncation: null, so input is currently unbounded.
+# That is not merely untidy: attention is O(L^2), so at seq_len 8180 the
+# attention scores alone are (1, 12, 8180, 8180) f32 = 3.2 GB, with the ALiBi
+# broadcast_add allocating another of the same shape, per layer, twelve layers.
+# One long row exhausts memory.
+#
+# #34 therefore pins Jina at 512 rather than its 8192 maximum, in 1.6 rather
+# than 2.0 -- Jina output is already changing via #33, so bundling costs users
+# nothing and avoids a second re-embedding cycle.
+#
+# Needs BOTH #33 (mask) and #34 (truncation) before it can pass.
+# ---------------------------------------------------------------------------
+mode skip
+
+query TTR
+SELECT model, case_id, list_cosine_similarity(embed_jina(text)::FLOAT[], ref) AS sim
+FROM golden
+WHERE model = 'jina' AND n_tokens > 512
+  AND list_cosine_similarity(embed_jina(text)::FLOAT[], ref) < 0.9999
+ORDER BY case_id;
+----
+
+mode unskip
+
+# ---------------------------------------------------------------------------
+# #35 -- NULL handling.
+#
+# as_slice_with_len::<duckdb_string_t> never consults the input validity mask
+# and the output list vector's validity is never set, so embed(NULL) most
+# likely embeds garbage rather than returning NULL.
+#
+# The second query is the one that matters: a NULL in the middle of a batch
+# must not shift the output rows off by one.
+# ---------------------------------------------------------------------------
+mode skip
+
+query I
+SELECT count(*) FROM (SELECT embed(NULL) AS v) WHERE v IS NOT NULL;
+----
+0
+
+query TI
+WITH mixed AS (
+  SELECT 'a' AS id, 'first row'  AS t
+  UNION ALL SELECT 'b', NULL
+  UNION ALL SELECT 'c', 'third row'
+)
+SELECT id, len(embed(t)::FLOAT[]) AS n
+FROM mixed
+WHERE (id = 'b') <> (embed(t) IS NULL)
+   OR (id <> 'b' AND len(embed(t)::FLOAT[]) <> 384);
+----
+
+mode unskip

@@ -44,10 +44,20 @@ from sentence_transformers import SentenceTransformer
 
 OUT = pathlib.Path(__file__).resolve().parent.parent / "test" / "golden" / "golden_vectors.csv"
 
+# (fixture name, HF model id, dims, max_length, trust_remote_code)
+#
+# max_length is pinned here rather than inherited, mirroring the rule the Rust
+# side must follow (see issue #34). The model files disagree about the limit:
+# all-MiniLM-L6-v2's tokenizer.json bakes in truncation at 128 while its
+# sentence_bert_config.json declares 256, and jina's tokenizer.json sets no
+# limit at all. Inheriting picks the wrong one silently.
+#
+#   minilm 256 -- the sentence-transformers value, what the ecosystem uses
+#   jina    512 -- NOT its 8192 maximum: attention is O(L^2), so at seq_len
+#                  8180 the attention scores alone are 3.2 GB per layer
 MODELS = [
-    # (fixture name, HF model id, expected dims, trust_remote_code)
-    ("minilm", "sentence-transformers/all-MiniLM-L6-v2", 384, False),
-    ("jina", "jinaai/jina-embeddings-v2-base-en", 768, True),
+    ("minilm", "sentence-transformers/all-MiniLM-L6-v2", 384, 256, False),
+    ("jina", "jinaai/jina-embeddings-v2-base-en", 768, 512, True),
 ]
 
 # Deterministic filler for the length-boundary cases. Never randomise: the
@@ -109,12 +119,13 @@ def build_cases(model, limit):
 
 def main():
     rows = []
-    for name, model_id, dims, remote in MODELS:
+    for name, model_id, dims, limit, remote in MODELS:
         print(f"\n=== {name}  ({model_id}) ===", file=sys.stderr)
         model = SentenceTransformer(model_id, trust_remote_code=remote)
 
-        limit = model.max_seq_length
-        print(f"  max_seq_length : {limit}", file=sys.stderr)
+        inherited = model.max_seq_length
+        model.max_seq_length = limit
+        print(f"  max_seq_length : {limit}  (inherited {inherited}, pinned)", file=sys.stderr)
         print(f"  modules        : {[type(m).__name__ for m in model]}", file=sys.stderr)
         # Verify the pooling matches what embed_utils.rs does (mean + L2).
         for module in model:
