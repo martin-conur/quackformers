@@ -136,13 +136,15 @@ impl ModelType {
         };
 
         // Try to load from local path first, fall back to HuggingFace Hub
-        let (tokenizer_filename, weights_filename) = if let Some(local_path) = self.get_local_model_path() {
-            self.load_from_local(&local_path)?
-        } else {
-            self.load_from_hub()?
-        };
+        let (tokenizer_filename, weights_filename) =
+            if let Some(local_path) = self.get_local_model_path() {
+                self.load_from_local(&local_path)?
+            } else {
+                self.load_from_hub()?
+            };
 
-        let tokenizer = Tokenizer::from_file(tokenizer_filename)?;
+        let mut tokenizer = Tokenizer::from_file(tokenizer_filename)?;
+        configure_batch_padding(&mut tokenizer);
 
         let vb =
             unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, device)? };
@@ -158,7 +160,7 @@ impl ModelType {
 
 pub trait Embed {
     fn embed(
-        &mut self,
+        &self,
         column: Vec<String>,
         batch_size: usize,
     ) -> Result<Vec<Vec<f32>>, EmbeddingError>;
@@ -206,22 +208,11 @@ impl EmbedModel for JinaModel {
 
 impl Embed for TextEmbedder {
     fn embed(
-        &mut self,
+        &self,
         column: Vec<String>,
         batch_size: usize,
     ) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         let device = self.model.device();
-
-        // padding
-        if let Some(pp) = self.tokenizer.get_padding_mut() {
-            pp.strategy = tokenizers::PaddingStrategy::BatchLongest
-        } else {
-            let pp = PaddingParams {
-                strategy: tokenizers::PaddingStrategy::BatchLongest,
-                ..Default::default()
-            };
-            self.tokenizer.with_padding(Some(pp));
-        }
 
         // chunk based approach
         let mut all_embeddings = Vec::with_capacity(column.len());
@@ -267,6 +258,92 @@ impl Embed for TextEmbedder {
     }
 }
 
+fn configure_batch_padding(tokenizer: &mut Tokenizer) {
+    if let Some(padding) = tokenizer.get_padding_mut() {
+        padding.strategy = tokenizers::PaddingStrategy::BatchLongest;
+    } else {
+        tokenizer.with_padding(Some(PaddingParams {
+            strategy: tokenizers::PaddingStrategy::BatchLongest,
+            ..Default::default()
+        }));
+    }
+}
+
 fn normalize_l2(v: &Tensor) -> Result<Tensor, EmbeddingError> {
     Ok(v.broadcast_div(&v.sqr()?.sum_keepdim(1)?.sqrt()?)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use candle_core::DType;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::thread;
+    use tokenizers::models::wordlevel::WordLevel;
+    use tokenizers::pre_tokenizers::whitespace::Whitespace;
+
+    struct TestModel {
+        device: Device,
+    }
+
+    impl EmbedModel for TestModel {
+        fn device(&self) -> &Device {
+            &self.device
+        }
+
+        fn forward(
+            &self,
+            input_ids: &Tensor,
+            _token_type_ids: &Tensor,
+            _attention_mask: Option<&Tensor>,
+        ) -> Result<Tensor, EmbeddingError> {
+            let dims = input_ids.dims();
+            Ok(Tensor::zeros(
+                (dims[0], dims[1], 1),
+                DType::F32,
+                &self.device,
+            )?)
+        }
+    }
+
+    fn test_embedder() -> TextEmbedder {
+        let vocab = HashMap::from([
+            ("[UNK]".to_string(), 0),
+            ("hello".to_string(), 1),
+            ("world".to_string(), 2),
+        ]);
+        let model = WordLevel::builder()
+            .vocab(vocab)
+            .unk_token("[UNK]".to_string())
+            .build()
+            .unwrap();
+        let mut tokenizer = Tokenizer::new(model);
+        tokenizer.with_pre_tokenizer(Whitespace::default());
+        configure_batch_padding(&mut tokenizer);
+
+        TextEmbedder {
+            model: Box::new(TestModel {
+                device: Device::Cpu,
+            }),
+            tokenizer,
+        }
+    }
+
+    #[test]
+    fn shared_embedder_supports_concurrent_calls() {
+        let embedder = Arc::new(test_embedder());
+        let handles = (0..2)
+            .map(|_| {
+                let embedder = Arc::clone(&embedder);
+                thread::spawn(move || embedder.embed(vec!["hello world".into()], 1))
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            let embeddings = handle.join().unwrap().unwrap();
+            assert_eq!(embeddings.len(), 1);
+            assert_eq!(embeddings[0].len(), 1);
+        }
+    }
 }

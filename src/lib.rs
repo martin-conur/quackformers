@@ -12,12 +12,11 @@ use duckdb::{
 };
 use duckdb_loadable_macros::duckdb_entrypoint_c_api;
 use libduckdb_sys::{duckdb_string_t, duckdb_string_t_data, duckdb_string_t_length};
+use once_cell::sync::Lazy;
 use std::error::Error;
 use std::slice;
-use once_cell::sync::Lazy;
 mod embed_utils;
 use embed_utils::{Embed, EmbeddingError, ModelType, TextEmbedder};
-use std::sync::Mutex;
 
 const DEVICE: Device = Device::Cpu;
 
@@ -38,25 +37,24 @@ fn process_strings(input_slice: &[duckdb_string_t]) -> Result<Vec<String>, Embed
 }
 
 /// Load & JIT once on first use:
-static BERT_EMBEDDER: Lazy<Mutex<TextEmbedder>> = Lazy::new(|| {
-    let mut embedder = ModelType::Bert(DEVICE)
+static BERT_EMBEDDER: Lazy<TextEmbedder> = Lazy::new(|| {
+    let embedder = ModelType::Bert(DEVICE)
         .build_text_embedder()
         .expect("failed to load BERT embedder");
     // Warm up: do one dummy forward to JIT kernels
     let dummy = ["hello world".to_string()].to_vec();
-    let _ = embedder.embed(dummy, /*batch_size=*/1);
-    Mutex::new(embedder)
+    let _ = embedder.embed(dummy, /*batch_size=*/ 1);
+    embedder
 });
 
-static JINA_EMBEDDER: Lazy<Mutex<TextEmbedder>> = Lazy::new(|| {
-    let mut embedder = ModelType::Jina(DEVICE)
+static JINA_EMBEDDER: Lazy<TextEmbedder> = Lazy::new(|| {
+    let embedder = ModelType::Jina(DEVICE)
         .build_text_embedder()
         .expect("failed to load Jina embedder");
     let dummy = ["hello world".to_string()].to_vec();
-    let _ = embedder.embed(dummy, /*batch_size=*/1);
-    Mutex::new(embedder)
+    let _ = embedder.embed(dummy, /*batch_size=*/ 1);
+    embedder
 });
-
 
 unsafe fn generic_embed_invoke(
     input: &mut DataChunkHandle,
@@ -73,13 +71,12 @@ unsafe fn generic_embed_invoke(
     // Bert embed
     let vect_phrases = process_strings(input_slice)?;
     // choose the already-loaded embedder
-    let mut guard = if use_jina {
-        JINA_EMBEDDER.lock().unwrap()
+    let embedder = if use_jina {
+        &*JINA_EMBEDDER
     } else {
-        BERT_EMBEDDER.lock().unwrap()
+        &*BERT_EMBEDDER
     };
-    // now we have a `&mut TextEmbedder`
-    let embedded_phrases = guard.embed(vect_phrases, /*batch_size=*/32)?;
+    let embedded_phrases = embedder.embed(vect_phrases, /*batch_size=*/ 32)?;
     // …rest of your write-out logic…
     let total_len: usize = embedded_phrases.iter().map(|v| v.len()).sum();
     let mut child_vector = output_list_vector.child(total_len);
@@ -114,7 +111,9 @@ impl VScalar for EmbedFunc {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        unsafe { generic_embed_invoke(input, output, /*use_jina=*/ false) }
+        unsafe {
+            generic_embed_invoke(input, output, /*use_jina=*/ false)
+        }
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -140,7 +139,9 @@ impl VScalar for EmbedJinaFunc {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        unsafe { generic_embed_invoke(input, output, /*use_jina=*/ true) }
+        unsafe {
+            generic_embed_invoke(input, output, /*use_jina=*/ true)
+        }
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
