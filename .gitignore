@@ -6,3 +6,4 @@ duckdb_unittest_tempdir
 /test/bin
 venv
 .DS_Store
+builds/
