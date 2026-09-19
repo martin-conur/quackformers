@@ -23,9 +23,17 @@ require quackformers
 # Fixture
 # ============================================================================
 
+# COALESCE is load-bearing, not defensive tidiness. read_csv parses the empty
+# `text` field of the 'empty' case as NULL rather than as an empty string, which
+# fed embed(NULL) into the ACTIVE queries below. embed() reads a duckdb_string_t
+# from a slot the validity mask says is invalid (#35): garbage on macOS, an
+# ACCESS_VIOLATION that kills the DuckDB process on Windows (#79).
+#
+# The 'empty' case is meant to be an empty string. NULL input is covered
+# deliberately in the skipped #35 block at the end of this file.
 statement ok
 CREATE TEMP TABLE golden AS
-SELECT model, case_id, n_tokens, text, CAST(vector AS FLOAT[]) AS ref
+SELECT model, case_id, n_tokens, COALESCE(text, '') AS text, CAST(vector AS FLOAT[]) AS ref
 FROM read_csv('test/golden/golden_vectors.csv', header = true);
 
 query I
