@@ -348,6 +348,7 @@ mod tests {
             let (embeddings, expected) = handle.join().unwrap();
             assert_eq!(embeddings.len(), 1);
             assert_eq!(embeddings[0].len(), expected.len());
+            assert!(embeddings[0].iter().all(|value| value.is_finite()));
             for (actual, expected) in embeddings[0].iter().zip(expected) {
                 assert!((actual - expected).abs() < 1e-5);
             }
