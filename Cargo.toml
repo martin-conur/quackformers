@@ -13,10 +13,6 @@ strip = true
 codegen-units = 1
 opt-level = 3
 
-[[example]]
-name = "quackformers"
-path = "src/wasm_lib.rs"
-crate-type = ["staticlib"]
 
 [dependencies]
 duckdb               = { version = "=1.10505.0", features = ["vscalar","vscalar-arrow","vtab-arrow"] }
@@ -37,10 +33,26 @@ candle-transformers  = { version = "0.8.4", default-features = false, features =
 accelerate-src       = "0.3.2"
 
 
-# Linux/Windows: use Intel MKL
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-candle-core = { version = "0.8.4", default-features = false }
-candle-nn = { version = "0.8.4", default-features = false }
+# Linux on x86_64: Intel MKL.
+#
+# NOT Windows. intel-mkl-src's mkl-static-lp64-iomp links dynamically against
+# Intel OpenMP (libiomp5md.dll) even in its "static" configuration, so the
+# extension builds but fails to load:
+#   IO Error: ... could not be loaded: The specified module could not be found.
+# candle-core pins that feature in its own manifest and Cargo features are
+# additive, so it cannot be subtracted here.
+#
+# intel-mkl-src arrives transitively via candle's `mkl` feature.
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+candle-core         = { version = "0.8.4", default-features = false, features = ["mkl"] }
+candle-nn           = { version = "0.8.4", default-features = false, features = ["mkl"] }
+candle-transformers = { version = "0.8.4", default-features = false, features = ["mkl"] }
+
+# Everything else non-macOS -- Windows (any arch) and linux_arm64, for which
+# MKL does not exist. candle's portable `gemm` backend.
+[target.'cfg(all(not(target_os = "macos"), not(all(target_os = "linux", target_arch = "x86_64"))))'.dependencies]
+candle-core         = { version = "0.8.4", default-features = false }
+candle-nn           = { version = "0.8.4", default-features = false }
 candle-transformers = { version = "0.8.4", default-features = false }
 
 # OpenSSL for non-Windows

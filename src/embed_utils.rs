@@ -6,7 +6,7 @@ use candle_transformers::models::bert::{
 use hf_hub::{api::sync::Api, Repo, RepoType};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-use tokenizers::{PaddingParams, Tokenizer};
+use tokenizers::{PaddingParams, Tokenizer, TruncationParams};
 mod jina_implementation;
 use jina_implementation::{Config as JinaConfig, JinaModel};
 
@@ -47,6 +47,13 @@ impl ModelType {
         match &self {
             Self::Bert(_) => "sentence-transformers/all-MiniLM-L6-v2".to_string(),
             Self::Jina(_) => "jinaai/jina-embeddings-v2-base-en".to_string(),
+        }
+    }
+
+    fn max_length(&self) -> usize {
+        match &self {
+            Self::Bert(_) => 256,
+            Self::Jina(_) => 512,
         }
     }
 
@@ -144,6 +151,10 @@ impl ModelType {
             };
 
         let mut tokenizer = Tokenizer::from_file(tokenizer_filename)?;
+        tokenizer.with_truncation(Some(TruncationParams {
+            max_length: self.max_length(),
+            ..Default::default()
+        }))?;
         configure_batch_padding(&mut tokenizer);
 
         let vb =
@@ -353,5 +364,26 @@ mod tests {
                 assert!((actual - expected).abs() < 1e-5);
             }
         }
+    }
+
+    // Generated with Claude. Human-reviewed before merge -- see CONTRIBUTING.md.
+
+    /// Guards the truncation limits from #34, which are load-bearing and easy
+    /// to typo.
+    ///
+    /// These are NOT the models' architectural maxima. They are what
+    /// sentence-transformers uses, taken from each model's
+    /// sentence_bert_config.json -- and that is the point. tokenizer.json
+    /// disagrees: all-MiniLM-L6-v2 bakes in max_length 128, half of 256, and
+    /// inheriting it made every input over 128 tokens disagree with the entire
+    /// ecosystem, silently.
+    ///
+    /// Jina's 512 is different in kind: its tokenizer.json sets no limit at
+    /// all, and 512 follows from batch_size = 32 rather than from the model,
+    /// which supports 8192. Raising it needs token-budget batching (#82).
+    #[test]
+    fn truncation_limits_are_explicit_not_inherited() {
+        assert_eq!(ModelType::Bert(Device::Cpu).max_length(), 256);
+        assert_eq!(ModelType::Jina(Device::Cpu).max_length(), 512);
     }
 }

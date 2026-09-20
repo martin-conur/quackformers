@@ -1,0 +1,301 @@
+# name: test/sql/golden_vectors.test
+# description: Golden-vector regression suite -- asserts embedding VALUES, not just shapes
+# group: [quack]
+#
+# Generated with Claude. Human-reviewed before merge -- see CONTRIBUTING.md.
+#
+# References come from scripts/gen_golden_vectors.py (sentence-transformers,
+# pinned). Regenerate deliberately, never incidentally.
+#
+# Every assertion below returns ZERO ROWS on success. Two reasons:
+#   1. sqllogictest compares text representations, so asserting on raw floats
+#      is brittle -- a last-digit difference fails with a useless message.
+#   2. On failure the runner prints the actual rows, so the failure message
+#      names exactly which model and case broke, and by how much.
+#
+# ::FLOAT[] on every embed() result is deliberate: a no-op on today's LIST
+# return type, a cast once #36 makes it a fixed-size ARRAY. Keeps this file
+# working across that change.
+
+require quackformers
+
+# ============================================================================
+# Fixture
+# ============================================================================
+
+# COALESCE is load-bearing, not defensive tidiness. read_csv parses the empty
+# `text` field of the 'empty' case as NULL rather than as an empty string, which
+# fed embed(NULL) into the ACTIVE queries below. embed() reads a duckdb_string_t
+# from a slot the validity mask says is invalid (#35): garbage on macOS, an
+# ACCESS_VIOLATION that kills the DuckDB process on Windows (#79).
+#
+# The 'empty' case is meant to be an empty string. NULL input is covered
+# deliberately in the skipped #35 block at the end of this file.
+statement ok
+CREATE TEMP TABLE golden AS
+SELECT model, case_id, n_tokens, COALESCE(text, '') AS text, CAST(vector AS FLOAT[]) AS ref
+FROM read_csv('test/golden/golden_vectors.csv', header = true);
+
+query I
+SELECT count(*) FROM golden;
+----
+16
+
+query I
+SELECT count(*) FROM golden
+WHERE (model = 'minilm' AND len(ref) <> 384)
+   OR (model = 'jina'   AND len(ref) <> 768);
+----
+0
+
+# ============================================================================
+# embed() / MiniLM, inputs within the effective truncation limit
+#
+# candle's BertModel honours the attention mask, so MiniLM is batch-invariant:
+# these were verified identical whether embedded alone or batched together.
+#
+# This is the regression guard for #32, #37 and #38, all of which claim not to
+# change output.
+#
+# The 128-token cutoff is NOT arbitrary -- see the skipped block below.
+# ============================================================================
+
+query TTR
+SELECT model, case_id, list_cosine_similarity(embed(text)::FLOAT[], ref) AS sim
+FROM golden
+WHERE model = 'minilm' AND n_tokens <= 128
+  AND list_cosine_similarity(embed(text)::FLOAT[], ref) < 0.9999
+ORDER BY case_id;
+----
+
+# Empty string is not a degenerate case: it tokenises to [CLS] [SEP], both
+# unmasked, so the mean-pool divisor is 2 and the result is a valid unit
+# vector. Guards against a regression to NaN if pooling changes in #40.
+query TI
+SELECT case_id, len(embed(text)::FLOAT[])
+FROM golden
+WHERE model = 'minilm' AND case_id = 'empty'
+  AND len(list_filter(embed(text)::FLOAT[], x -> NOT isfinite(x))) > 0;
+----
+
+# ============================================================================
+# KNOWN FAILURES -- each unskips when its issue lands
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# #34 -- MiniLM silently truncates at 128 tokens.
+#
+# all-MiniLM-L6-v2's tokenizer.json bakes in truncation at max_length 128, and
+# Tokenizer::from_file honours it. sentence_bert_config.json declares
+# max_seq_length 256, which is what sentence-transformers actually uses.
+#
+# So any input over 128 tokens silently disagrees with the rest of the
+# ecosystem. Measured: cosine to the reference flatlines at 0.95995 from ~128
+# tokens onward -- additional text is simply discarded.
+#
+# It went unnoticed because embed_utils.rs:216-224 overrides `padding`
+# (Fixed:128 -> BatchLongest) but never touches `truncation`.
+#
+# Unskip when #34 sets MiniLM truncation explicitly to 256. Note this is a
+# vector-change: output moves for every input over 128 tokens.
+# ---------------------------------------------------------------------------
+
+query TTR
+SELECT model, case_id, list_cosine_similarity(embed(text)::FLOAT[], ref) AS sim
+FROM golden
+WHERE model = 'minilm' AND n_tokens > 128
+  AND list_cosine_similarity(embed(text)::FLOAT[], ref) < 0.9999
+ORDER BY case_id;
+----
+
+
+# ---------------------------------------------------------------------------
+# #33 -- embed_jina() ignores the attention mask.
+#
+# Pad tokens carry a real embedding and real tokens attend to them, so a row's
+# vector depends on which rows shared its batch. DuckDB hands all these rows to
+# one invoke() call, so every short row here is contaminated by the longest.
+#
+# Unskip when #33 lands. The diff on the fixture is the release-note evidence.
+# ---------------------------------------------------------------------------
+mode skip
+
+query TTR
+SELECT model, case_id, list_cosine_similarity(embed_jina(text)::FLOAT[], ref) AS sim
+FROM golden
+WHERE model = 'jina' AND n_tokens <= 512
+  AND list_cosine_similarity(embed_jina(text)::FLOAT[], ref) < 0.9999
+ORDER BY case_id;
+----
+
+mode unskip
+
+# ---------------------------------------------------------------------------
+# #33 -- batch-composition invariance, stated explicitly.
+#
+# The fixture was generated with batch_size=1, so every reference vector is an
+# isolated embedding with no padding anywhere. Embedding batch_short alongside
+# batch_long and comparing against that reference IS the invariance test.
+#
+# Overlaps the block above but is the clearest statement of the invariant: a
+# row's vector must not depend on its neighbours. Deleting THIS mode skip is
+# the acceptance criterion for #33.
+# ---------------------------------------------------------------------------
+mode skip
+
+query TR
+WITH batched AS (
+  SELECT case_id, embed_jina(text)::FLOAT[] AS v
+  FROM golden
+  WHERE model = 'jina' AND case_id IN ('batch_short', 'batch_long')
+)
+SELECT b.case_id, list_cosine_similarity(b.v, g.ref) AS sim
+FROM batched b
+JOIN golden g ON g.model = 'jina' AND g.case_id = b.case_id
+WHERE list_cosine_similarity(b.v, g.ref) < 0.99999
+ORDER BY b.case_id;
+----
+
+mode unskip
+
+# ---------------------------------------------------------------------------
+# #33 + #34 -- Jina inputs over the 512-token limit.
+#
+# Jina's tokenizer.json sets truncation: null, so input is currently unbounded.
+# That is not merely untidy: attention is O(L^2), so at seq_len 8180 the
+# attention scores alone are (1, 12, 8180, 8180) f32 = 3.2 GB, with the ALiBi
+# broadcast_add allocating another of the same shape, per layer, twelve layers.
+# One long row exhausts memory.
+#
+# #34 therefore pins Jina at 512 rather than its 8192 maximum, in 1.6 rather
+# than 2.0 -- Jina output is already changing via #33, so bundling costs users
+# nothing and avoids a second re-embedding cycle.
+#
+# Needs BOTH #33 (mask) and #34 (truncation) before it can pass.
+# ---------------------------------------------------------------------------
+mode skip
+
+query TTR
+SELECT model, case_id, list_cosine_similarity(embed_jina(text)::FLOAT[], ref) AS sim
+FROM golden
+WHERE model = 'jina' AND n_tokens > 512
+  AND list_cosine_similarity(embed_jina(text)::FLOAT[], ref) < 0.9999
+ORDER BY case_id;
+----
+
+mode unskip
+
+# ---------------------------------------------------------------------------
+# #35 -- NULL handling.
+#
+# as_slice_with_len::<duckdb_string_t> never consults the input validity mask
+# (src/lib.rs:68), so a NULL slot yields an arbitrary length and an arbitrary
+# pointer and slice::from_raw_parts reads wild memory: a garbage 384-float
+# vector on macOS, ACCESS_VIOLATION on Windows.
+#
+# Two independent failures have to be covered, and the second is the one that
+# corrupts data silently:
+#
+#   1. NULL must propagate -- NULL in, NULL out, no wild read.
+#   2. Row indices must stay aligned. The natural fix is to skip NULL rows when
+#      building the batch, which makes batch position diverge from row position:
+#
+#        row 0 "first row"  -> batch[0]
+#        row 1 NULL         -> skipped
+#        row 2 "third row"  -> batch[1]
+#
+#      A write-out loop that still indexes by batch position writes batch[1]
+#      into row 1. Row 2 then holds row 0's embedding -- non-null, 384 long,
+#      and completely wrong. Shape assertions cannot see this; only comparing
+#      values can.
+#
+# Measured against the current (unfixed) build, so expectations are known:
+#
+#   query 1  PASSES today -- DuckDB short-circuits a constant NULL
+#   query 2  PASSES today -- nothing skips rows yet, so indices are trivially
+#                            aligned. This is a guard against the FIX
+#                            introducing misalignment, not a demo of the bug.
+#   query 3  FAILS today  -- returns row 'b', because embed(NULL) from a table
+#                            yields a garbage 384-float vector instead of NULL.
+#                            This is the one the fix must turn green.
+# ---------------------------------------------------------------------------
+# 1. NULL propagates.
+query I
+SELECT count(*) FROM (SELECT embed(NULL) AS v) WHERE v IS NOT NULL;
+----
+0
+
+# 2. NULL does not misalign its neighbours.
+#
+# Each scalar subquery is its own single-row query, so it embeds that text in
+# isolation -- an uncontaminated reference for the batched result to match.
+# Fails if 'a' and 'c' are swapped, shifted, or hold stale data.
+query TR
+WITH mixed AS (
+  SELECT 'a' AS id, 'first row'  AS t
+  UNION ALL SELECT 'b', NULL
+  UNION ALL SELECT 'c', 'third row'
+),
+batched AS (
+  SELECT id, t, embed(t)::FLOAT[] AS v FROM mixed
+)
+SELECT id, list_cosine_similarity(v, solo) AS sim
+FROM batched, LATERAL (
+  SELECT CASE id
+           WHEN 'a' THEN (SELECT embed('first row')::FLOAT[])
+           WHEN 'c' THEN (SELECT embed('third row')::FLOAT[])
+         END AS solo
+)
+WHERE t IS NOT NULL
+  AND (v IS NULL OR len(v) <> 384 OR list_cosine_similarity(v, solo) < 0.99999)
+ORDER BY id;
+----
+
+# 3. The NULL row itself is NULL, and only that row.
+query T
+WITH mixed AS (
+  SELECT 'a' AS id, 'first row'  AS t
+  UNION ALL SELECT 'b', NULL
+  UNION ALL SELECT 'c', 'third row'
+)
+SELECT id FROM mixed
+WHERE (id = 'b') <> (embed(t) IS NULL)
+ORDER BY id;
+----
+
+# 4. Position of the NULL must not matter.
+#
+# Query 2 only covers a NULL in the MIDDLE. A trailing NULL is what catches a
+# short set_len -- the list reports fewer rows than the chunk holds and the
+# last row silently disappears. A leading NULL catches the mirror case.
+query II
+SELECT count(*), count(v)
+FROM (SELECT embed(t) AS v FROM (VALUES ('a'), ('b'), (NULL)) s(t));
+----
+3	2
+
+query II
+SELECT count(*), count(v)
+FROM (SELECT embed(t) AS v FROM (VALUES (NULL), ('b'), ('c')) s(t));
+----
+3	2
+
+# 5. Every row NULL.
+#
+# Exercises the degenerate path: texts is empty, total_len is 0, and the child
+# vector is reserved with child(0).
+query II
+SELECT count(*), count(v) FROM (SELECT embed(NULL) AS v FROM range(5));
+----
+5	0
+
+# 6. Empty string is not NULL.
+#
+# '' tokenises to [CLS] [SEP] -- two real, unmasked tokens -- so it is a valid
+# input with a real embedding, not a degenerate case. Guards against a fix that
+# conflates "empty" with "absent".
+query I
+SELECT count(*) FROM (SELECT embed('') AS v) WHERE v IS NULL OR len(v) <> 384;
+----
+0
+
