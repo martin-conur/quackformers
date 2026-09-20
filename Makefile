@@ -1,4 +1,4 @@
-.PHONY: clean clean_all
+.PHONY: clean clean_all test_rust
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -23,9 +23,21 @@ configure: venv platform extension_version
 debug: build_extension_library_debug build_extension_with_metadata_debug
 release: build_extension_library_release build_extension_with_metadata_release
 
-test: test_debug
+test: test_debug test_rust
 test_debug: test_extension_debug
 test_release: test_extension_release
+
+# Rust unit tests. Separate from the sqllogictest suite: these cover model
+# internals (pooling, ALiBi construction, tokenizer config) that never cross
+# the DuckDB boundary, so they need no extension load and run in seconds
+# rather than the ~3 minutes LOAD currently costs.
+#
+# --lib is deliberate. Tests that call into DuckDB cannot run here: with the
+# loadable-extension feature its symbols resolve from the host process at load
+# time, so there is nothing to call in a standalone test binary. Test model
+# internals in Rust, the SQL surface in test/sql.
+test_rust:
+	cargo test --lib --locked
 
 clean: clean_build clean_rust
 clean_all: clean_configure clean
