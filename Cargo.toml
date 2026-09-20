@@ -13,10 +13,6 @@ strip = true
 codegen-units = 1
 opt-level = 3
 
-[[example]]
-name = "quackformers"
-path = "src/wasm_lib.rs"
-crate-type = ["staticlib"]
 
 [dependencies]
 duckdb               = { version = "=1.10505.0", features = ["vscalar","vscalar-arrow","vtab-arrow"] }
