@@ -37,10 +37,20 @@ candle-transformers  = { version = "0.8.4", default-features = false, features =
 accelerate-src       = "0.3.2"
 
 
-# Linux/Windows: use Intel MKL
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-candle-core = { version = "0.8.4", default-features = false }
-candle-nn = { version = "0.8.4", default-features = false }
+# Linux/Windows on x86_64: Intel MKL.
+# intel-mkl-src comes transitively via candle's `mkl` feature, already pinned
+# to features = ["mkl-static-lp64-iomp"] by candle-core.
+[target.'cfg(all(not(target_os = "macos"), target_arch = "x86_64"))'.dependencies]
+candle-core         = { version = "0.8.4", default-features = false, features = ["mkl"] }
+candle-nn           = { version = "0.8.4", default-features = false, features = ["mkl"] }
+candle-transformers = { version = "0.8.4", default-features = false, features = ["mkl"] }
+
+# Every other non-macOS target -- notably linux_arm64, which is in the build
+# matrix and for which MKL does not exist. Falls back to candle's portable
+# `gemm` backend.
+[target.'cfg(all(not(target_os = "macos"), not(target_arch = "x86_64")))'.dependencies]
+candle-core         = { version = "0.8.4", default-features = false }
+candle-nn           = { version = "0.8.4", default-features = false }
 candle-transformers = { version = "0.8.4", default-features = false }
 
 # OpenSSL for non-Windows
