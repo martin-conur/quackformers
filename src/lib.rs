@@ -21,6 +21,8 @@ use embed_utils::{Embed, EmbeddingError, ModelType, TextEmbedder};
 
 const DEVICE: Device = Device::Cpu;
 const EMBEDDING_BATCH_SIZE: usize = 32;
+// Keep forward-pass memory bounded even on hosts with many logical CPUs.
+const MAX_EMBEDDING_CONCURRENCY: usize = 4;
 
 struct Semaphore {
     permits: Mutex<usize>,
@@ -70,7 +72,7 @@ impl Drop for SemaphorePermit<'_> {
 
 fn embedding_concurrency_limit() -> usize {
     std::thread::available_parallelism()
-        .map(|cores| (cores.get() / 2).max(1))
+        .map(|cores| (cores.get() / 2).max(1).min(MAX_EMBEDDING_CONCURRENCY))
         .unwrap_or(1)
 }
 
@@ -239,6 +241,13 @@ mod tests {
     };
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn embedding_concurrency_limit_is_bounded() {
+        let limit = embedding_concurrency_limit();
+
+        assert!((1..=MAX_EMBEDDING_CONCURRENCY).contains(&limit));
+    }
 
     #[test]
     fn semaphore_limits_active_permits() {
