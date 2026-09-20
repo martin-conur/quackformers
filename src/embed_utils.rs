@@ -282,3 +282,29 @@ impl Embed for TextEmbedder {
 fn normalize_l2(v: &Tensor) -> Result<Tensor, EmbeddingError> {
     Ok(v.broadcast_div(&v.sqr()?.sum_keepdim(1)?.sqrt()?)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Generated with Claude. Human-reviewed before merge -- see CONTRIBUTING.md.
+
+    /// Guards the truncation limits from #34, which are load-bearing and easy
+    /// to typo.
+    ///
+    /// These are NOT the models' architectural maxima. They are what
+    /// sentence-transformers uses, taken from each model's
+    /// sentence_bert_config.json -- and that is the point. tokenizer.json
+    /// disagrees: all-MiniLM-L6-v2 bakes in max_length 128, half of 256, and
+    /// inheriting it made every input over 128 tokens disagree with the entire
+    /// ecosystem, silently.
+    ///
+    /// Jina's 512 is different in kind: its tokenizer.json sets no limit at
+    /// all, and 512 follows from batch_size = 32 rather than from the model,
+    /// which supports 8192. Raising it needs token-budget batching (#82).
+    #[test]
+    fn truncation_limits_are_explicit_not_inherited() {
+        assert_eq!(ModelType::Bert(Device::Cpu).max_length(), 256);
+        assert_eq!(ModelType::Jina(Device::Cpu).max_length(), 512);
+    }
+}
