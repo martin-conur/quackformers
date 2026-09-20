@@ -99,7 +99,6 @@ WHERE model = 'minilm' AND case_id = 'empty'
 # Unskip when #34 sets MiniLM truncation explicitly to 256. Note this is a
 # vector-change: output moves for every input over 128 tokens.
 # ---------------------------------------------------------------------------
-mode skip
 
 query TTR
 SELECT model, case_id, list_cosine_similarity(embed(text)::FLOAT[], ref) AS sim
@@ -109,7 +108,6 @@ WHERE model = 'minilm' AND n_tokens > 128
 ORDER BY case_id;
 ----
 
-mode unskip
 
 # ---------------------------------------------------------------------------
 # #33 -- embed_jina() ignores the attention mask.

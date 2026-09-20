@@ -6,7 +6,7 @@ use candle_transformers::models::bert::{
 use hf_hub::{api::sync::Api, Repo, RepoType};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-use tokenizers::{PaddingParams, Tokenizer};
+use tokenizers::{PaddingParams, Tokenizer, TruncationParams};
 mod jina_implementation;
 use jina_implementation::{Config as JinaConfig, JinaModel};
 
@@ -47,6 +47,13 @@ impl ModelType {
         match &self {
             Self::Bert(_) => "sentence-transformers/all-MiniLM-L6-v2".to_string(),
             Self::Jina(_) => "jinaai/jina-embeddings-v2-base-en".to_string(),
+        }
+    }
+
+    fn max_length(&self) -> usize {
+        match &self {
+            Self::Bert(_) => 256,
+            Self::Jina(_) => 512,
         }
     }
 
@@ -136,13 +143,18 @@ impl ModelType {
         };
 
         // Try to load from local path first, fall back to HuggingFace Hub
-        let (tokenizer_filename, weights_filename) = if let Some(local_path) = self.get_local_model_path() {
-            self.load_from_local(&local_path)?
-        } else {
-            self.load_from_hub()?
-        };
+        let (tokenizer_filename, weights_filename) =
+            if let Some(local_path) = self.get_local_model_path() {
+                self.load_from_local(&local_path)?
+            } else {
+                self.load_from_hub()?
+            };
 
-        let tokenizer = Tokenizer::from_file(tokenizer_filename)?;
+        let mut tokenizer = Tokenizer::from_file(tokenizer_filename)?;
+        tokenizer.with_truncation(Some(TruncationParams {
+            max_length: self.max_length(),
+            ..Default::default()
+        }))?;
 
         let vb =
             unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, device)? };
