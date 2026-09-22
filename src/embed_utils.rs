@@ -155,6 +155,7 @@ impl ModelType {
             max_length: self.max_length(),
             ..Default::default()
         }))?;
+        configure_batch_padding(&mut tokenizer);
 
         let vb =
             unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, device)? };
@@ -170,7 +171,7 @@ impl ModelType {
 
 pub trait Embed {
     fn embed(
-        &mut self,
+        &self,
         column: Vec<String>,
         batch_size: usize,
     ) -> Result<Vec<Vec<f32>>, EmbeddingError>;
@@ -218,22 +219,11 @@ impl EmbedModel for JinaModel {
 
 impl Embed for TextEmbedder {
     fn embed(
-        &mut self,
+        &self,
         column: Vec<String>,
         batch_size: usize,
     ) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         let device = self.model.device();
-
-        // padding
-        if let Some(pp) = self.tokenizer.get_padding_mut() {
-            pp.strategy = tokenizers::PaddingStrategy::BatchLongest
-        } else {
-            let pp = PaddingParams {
-                strategy: tokenizers::PaddingStrategy::BatchLongest,
-                ..Default::default()
-            };
-            self.tokenizer.with_padding(Some(pp));
-        }
 
         // chunk based approach
         let mut all_embeddings = Vec::with_capacity(column.len());
@@ -279,6 +269,17 @@ impl Embed for TextEmbedder {
     }
 }
 
+fn configure_batch_padding(tokenizer: &mut Tokenizer) {
+    if let Some(padding) = tokenizer.get_padding_mut() {
+        padding.strategy = tokenizers::PaddingStrategy::BatchLongest;
+    } else {
+        tokenizer.with_padding(Some(PaddingParams {
+            strategy: tokenizers::PaddingStrategy::BatchLongest,
+            ..Default::default()
+        }));
+    }
+}
+
 fn normalize_l2(v: &Tensor) -> Result<Tensor, EmbeddingError> {
     Ok(v.broadcast_div(&v.sqr()?.sum_keepdim(1)?.sqrt()?)?)
 }
@@ -286,6 +287,84 @@ fn normalize_l2(v: &Tensor) -> Result<Tensor, EmbeddingError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::DType;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::thread;
+    use tokenizers::models::wordlevel::WordLevel;
+    use tokenizers::pre_tokenizers::whitespace::Whitespace;
+
+    struct TestModel {
+        device: Device,
+    }
+
+    impl EmbedModel for TestModel {
+        fn device(&self) -> &Device {
+            &self.device
+        }
+
+        fn forward(
+            &self,
+            input_ids: &Tensor,
+            _token_type_ids: &Tensor,
+            _attention_mask: Option<&Tensor>,
+        ) -> Result<Tensor, EmbeddingError> {
+            let input_ids = input_ids.to_dtype(DType::F32)?.unsqueeze(2)?;
+            let squared_input_ids = input_ids.sqr()?;
+            Ok(Tensor::cat(&[&input_ids, &squared_input_ids], 2)?)
+        }
+    }
+
+    fn test_embedder() -> TextEmbedder {
+        let vocab = HashMap::from([
+            ("[UNK]".to_string(), 0),
+            ("hello".to_string(), 1),
+            ("world".to_string(), 2),
+        ]);
+        let model = WordLevel::builder()
+            .vocab(vocab)
+            .unk_token("[UNK]".to_string())
+            .build()
+            .unwrap();
+        let mut tokenizer = Tokenizer::new(model);
+        tokenizer.with_pre_tokenizer(Whitespace);
+        configure_batch_padding(&mut tokenizer);
+
+        TextEmbedder {
+            model: Box::new(TestModel {
+                device: Device::Cpu,
+            }),
+            tokenizer,
+        }
+    }
+
+    #[test]
+    fn shared_embedder_supports_concurrent_calls() {
+        let embedder = Arc::new(test_embedder());
+        let handles = [
+            ("hello", [0.70710677, 0.70710677]),
+            ("world", [0.4472136, 0.8944272]),
+        ]
+        .into_iter()
+        .map(|(text, expected)| {
+            let embedder = Arc::clone(&embedder);
+            thread::spawn(move || {
+                let embeddings = embedder.embed(vec![text.into()], 1).unwrap();
+                (embeddings, expected)
+            })
+        })
+        .collect::<Vec<_>>();
+
+        for handle in handles {
+            let (embeddings, expected) = handle.join().unwrap();
+            assert_eq!(embeddings.len(), 1);
+            assert_eq!(embeddings[0].len(), expected.len());
+            assert!(embeddings[0].iter().all(|value| value.is_finite()));
+            for (actual, expected) in embeddings[0].iter().zip(expected) {
+                assert!((actual - expected).abs() < 1e-5);
+            }
+        }
+    }
 
     // Generated with Claude. Human-reviewed before merge -- see CONTRIBUTING.md.
 
