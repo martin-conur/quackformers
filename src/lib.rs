@@ -72,7 +72,7 @@ impl Drop for SemaphorePermit<'_> {
 
 fn embedding_concurrency_limit() -> usize {
     std::thread::available_parallelism()
-        .map(|cores| (cores.get() / 2).max(1).min(MAX_EMBEDDING_CONCURRENCY))
+        .map(|cores| (cores.get() / 2).clamp(1, MAX_EMBEDDING_CONCURRENCY))
         .unwrap_or(1)
 }
 
@@ -124,11 +124,11 @@ unsafe fn generic_embed_invoke(
     let mut texts: Vec<String> = Vec::with_capacity(input.len());
     let mut rows: Vec<usize> = Vec::with_capacity(input.len());
 
-    for row in 0..input.len() {
+    for (row, word) in input_slice.iter().enumerate() {
         if input_vec.try_row_is_null(row as u64)? {
             continue;
         }
-        texts.push(duckdb_string_to_owned_string(&input_slice[row]));
+        texts.push(duckdb_string_to_owned_string(word));
         rows.push(row);
     }
     // choose the already-loaded embedder
