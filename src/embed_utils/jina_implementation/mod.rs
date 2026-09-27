@@ -382,3 +382,68 @@ impl JinaModel {
         Ok(sequence_output)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn alibi_bias() -> candle_core::Result<()> {
+        let mut big = Config::v2_base();
+        big.max_position_embeddings = 1024;
+
+        let mut small = Config::v2_base();
+        small.max_position_embeddings = 128;
+
+        assert_eq!(
+            build_alibi_bias(&small)?.flatten_all()?.to_vec1::<f32>()?,
+            build_alibi_bias(&big)?
+                .i((.., .., ..128, ..128))?
+                .flatten_all()?
+                .to_vec1::<f32>()?,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diagonal_zero() -> candle_core::Result<()> {
+        let mut config = Config::v2_base();
+        config.max_position_embeddings = 128;
+
+        let bias = build_alibi_bias(&config)?;
+
+        let mut diagonal_sum: f32 = 0.0;
+
+        for i in 0..128 {
+            diagonal_sum += bias
+                .i((.., .., i, i))?
+                .flatten_all()?
+                .abs()?
+                .sum(0)?
+                .to_scalar::<f32>()?
+        }
+
+        assert_eq!(diagonal_sum, 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn symmetry() -> candle_core::Result<()> {
+        let mut config = Config::v2_base();
+        config.max_position_embeddings = 128;
+
+        let bias = build_alibi_bias(&config)?;
+
+        assert_eq!(
+            bias.flatten_all()?.to_vec1::<f32>()?,
+            bias.transpose(2, 3)?.flatten_all()?.to_vec1::<f32>()?
+        );
+        Ok(())
+    }
+
+    // this will fail for now
+    #[test]
+    #[ignore]
+    fn test_alibi_bias_v2() -> candle_core::Result<()> {
+        todo!();
+    }
+}
