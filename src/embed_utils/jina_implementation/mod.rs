@@ -1,4 +1,4 @@
-use candle_core::{DType, Device, IndexOp, Result, Tensor, D};
+use candle_core::{DType, Device, Result, Tensor, D};
 use candle_nn::ops::softmax_last_dim;
 use candle_nn::{
     embedding, layer_norm, linear, linear_no_bias, Embedding, LayerNorm, Linear, Module, VarBuilder,
@@ -293,10 +293,9 @@ impl BertLayer {
     }
 }
 
-fn build_alibi_bias(config: &Config) -> Result<Tensor> {
+fn build_alibi_bias(config: &Config, seq_len: usize, device: &Device) -> Result<Tensor> {
     let n_heads = config.num_attention_heads;
-    let seq_len = config.max_position_embeddings;
-    let alibi_bias = Tensor::arange(0, seq_len as i64, &Device::Cpu)?.to_dtype(DType::F32)?;
+    let alibi_bias = Tensor::arange(0, seq_len as i64, device)?.to_dtype(DType::F32)?;
     let alibi_bias = {
         let a1 = alibi_bias.reshape((1, seq_len))?;
         let a2 = alibi_bias.reshape((seq_len, 1))?;
@@ -322,14 +321,14 @@ fn build_alibi_bias(config: &Config) -> Result<Tensor> {
             .cloned()
             .collect::<Vec<f32>>()
     };
-    let slopes = Tensor::new(slopes, &Device::Cpu)?.reshape((1, (), 1, 1))?;
+    let slopes = Tensor::new(slopes, device)?.reshape((1, (), 1, 1))?;
     alibi_bias.to_dtype(DType::F32)?.broadcast_mul(&slopes)
 }
 
 #[derive(Clone, Debug)]
 struct BertEncoder {
-    alibi: Tensor,
     layers: Vec<BertLayer>,
+    config: Config,
 }
 
 impl BertEncoder {
@@ -337,15 +336,17 @@ impl BertEncoder {
         let layers = (0..config.num_hidden_layers)
             .map(|index| BertLayer::new(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
-        let alibi = build_alibi_bias(config)?.to_device(vb.device())?;
-        Ok(Self { alibi, layers })
+        Ok(Self {
+            layers,
+            config: config.clone(),
+        })
     }
 }
 
 impl Module for BertEncoder {
     fn forward(&self, xs: &Tensor) -> Result<Tensor> {
         let seq_len = xs.dim(1)?;
-        let alibi_bias = self.alibi.i((.., .., ..seq_len, ..seq_len))?;
+        let alibi_bias = build_alibi_bias(&self.config, seq_len, xs.device())?;
         let mut xs = xs.clone();
         for layer in self.layers.iter() {
             xs = layer.forward(&xs, &alibi_bias)?
@@ -386,17 +387,20 @@ impl JinaModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::IndexOp;
     #[test]
     fn alibi_bias() -> candle_core::Result<()> {
-        let mut big = Config::v2_base();
-        big.max_position_embeddings = 1024;
+        let big = Config::v2_base();
+        let big_seq_len = 1024;
 
-        let mut small = Config::v2_base();
-        small.max_position_embeddings = 128;
+        let small = Config::v2_base();
+        let small_seq_len = 128;
 
         assert_eq!(
-            build_alibi_bias(&small)?.flatten_all()?.to_vec1::<f32>()?,
-            build_alibi_bias(&big)?
+            build_alibi_bias(&small, small_seq_len, &Device::Cpu)?
+                .flatten_all()?
+                .to_vec1::<f32>()?,
+            build_alibi_bias(&big, big_seq_len, &Device::Cpu)?
                 .i((.., .., ..128, ..128))?
                 .flatten_all()?
                 .to_vec1::<f32>()?,
@@ -406,10 +410,9 @@ mod tests {
 
     #[test]
     fn diagonal_zero() -> candle_core::Result<()> {
-        let mut config = Config::v2_base();
-        config.max_position_embeddings = 128;
+        let config = Config::v2_base();
 
-        let bias = build_alibi_bias(&config)?;
+        let bias = build_alibi_bias(&config, 128, &Device::Cpu)?;
 
         let mut diagonal_sum: f32 = 0.0;
 
@@ -428,22 +431,14 @@ mod tests {
 
     #[test]
     fn symmetry() -> candle_core::Result<()> {
-        let mut config = Config::v2_base();
-        config.max_position_embeddings = 128;
+        let config = Config::v2_base();
 
-        let bias = build_alibi_bias(&config)?;
+        let bias = build_alibi_bias(&config, 128, &Device::Cpu)?;
 
         assert_eq!(
             bias.flatten_all()?.to_vec1::<f32>()?,
             bias.transpose(2, 3)?.flatten_all()?.to_vec1::<f32>()?
         );
         Ok(())
-    }
-
-    // this will fail for now
-    #[test]
-    #[ignore]
-    fn test_alibi_bias_v2() -> candle_core::Result<()> {
-        todo!();
     }
 }
