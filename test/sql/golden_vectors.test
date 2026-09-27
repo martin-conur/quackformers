@@ -110,6 +110,39 @@ ORDER BY case_id;
 
 
 # ---------------------------------------------------------------------------
+# #32 -- ALiBi bias is built at the actual sequence length.
+#
+# ACTIVE, and the only end-to-end Jina assertion in this file. Every other one
+# is skipped on #33, which contaminates any row sharing a batch with a longer
+# one. A single row cannot be padded, so #33 cannot reach this case and it is
+# comparable to the reference today.
+#
+# The single-row filter is load-bearing, not a convenience. Widen it and this
+# starts failing for #33's reasons rather than #32's, and the failure will be
+# read as a regression in the bias.
+#
+# near_limit is chosen deliberately: at 500 tokens it is the longest Jina input
+# under the 512-token truncation limit, so it builds the largest bias this
+# version can produce. A bias built at the wrong extent, with mis-ordered
+# slopes, or with the sign of the distance term flipped drops this similarity
+# far below the threshold.
+#
+# Before #32, build_alibi_bias() ignored the input and built once at
+# max_position_embeddings (8192), then sliced down; it now builds at the real L.
+# Values are unchanged -- that is what this asserts -- while LOAD went from
+# 167.56s to 1.26s and peak RSS from ~3.2GB to ~1.0GB.
+# ---------------------------------------------------------------------------
+
+query TTR
+SELECT model, case_id, list_cosine_similarity(embed_jina(text)::FLOAT[], ref) AS sim
+FROM golden
+WHERE model = 'jina' AND case_id = 'near_limit'
+  AND list_cosine_similarity(embed_jina(text)::FLOAT[], ref) < 0.9999
+ORDER BY case_id;
+----
+
+
+# ---------------------------------------------------------------------------
 # #33 -- embed_jina() ignores the attention mask.
 #
 # Pad tokens carry a real embedding and real tokens attend to them, so a row's
