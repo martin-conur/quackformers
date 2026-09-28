@@ -1,6 +1,6 @@
 [package]
 name = "quackformers"
-version = "0.1.4"
+version = "1.6.0-rc.1"
 edition = "2021"
 # …
 
