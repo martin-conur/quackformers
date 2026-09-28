@@ -2962,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "quackformers"
-version = "0.1.4"
+version = "1.6.0-rc.1"
 dependencies = [
  "accelerate-src",
  "candle-core",
