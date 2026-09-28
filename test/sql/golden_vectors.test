@@ -332,3 +332,96 @@ SELECT count(*) FROM (SELECT embed('') AS v) WHERE v IS NULL OR len(v) <> 384;
 ----
 0
 
+
+# ---------------------------------------------------------------------------
+# #89 -- the list vector's child size is set to the row count.
+#
+# src/lib.rs:108 passes input.len() to ListVector::set_len, which forwards to
+# duckdb_list_vector_set_size -- and that sizes the CHILD vector, not the number
+# of rows. For a single row of embed() the child holds 384 floats but is
+# declared to hold 1, so consumers that trust the declared size read past the
+# end of the buffer.
+#
+# Present since f821198, the first commit that returned a list, which passed
+# embedded_phrases.len(). Also a row count.
+#
+# It is not a missing-elements bug, it is an out-of-bounds read. Measured on the
+# unfixed build, list_sum() over embed() returns values like -2.88e+137,
+# 1.07e-311 and 5.82e+200 -- whatever happened to be in memory past the child
+# buffer. The multi-row form faults instead of returning numbers.
+#
+# WHY NOTHING ELSE IN THIS FILE CATCHES IT
+#
+# Readers that use the list entry's (offset, length), which set_entry writes
+# correctly, are unaffected. That is every other assertion here:
+#
+#   correct: len(), v[i], unnest(), list_cosine_similarity()
+#   broken:  ::VARCHAR, list_sum(), to_json(), printf('%s', ...)
+#
+# And list_transform() LAUNDERS the bug -- it reads the source through the entry
+# (correct) and emits a NEW list whose child size DuckDB sets itself. So
+# list_sum(list_transform(v, lambda x: x)) is right while list_sum(v) is wrong,
+# on the same vector, in the same query.
+#
+# That laundering is what makes assertions 1 and 2 work: they compare the two
+# read paths against each other, so they need no reference vectors and are
+# unaffected by #33. Do not "simplify" them by dropping the list_transform --
+# that removes the only correct side of the comparison.
+# ---------------------------------------------------------------------------
+
+# 1. embed(): the direct and laundered reads of one vector must agree.
+#
+# Three cases, not sixteen: the defect is per-invoke and not text-dependent, and
+# every embed() call costs ~1.7s in a debug build. 'empty' is the degenerate
+# input, 'short_ascii' the ordinary one, 'near_limit' the longest under the
+# truncation limit.
+#
+# delta is computed in the subquery and filtered on the alias so that embed()
+# is evaluated once per row. Repeating the expression in both SELECT and WHERE
+# doubles it. Only the scalar delta crosses the subquery boundary -- the list
+# never does, which is what keeps the laundering comparison intact.
+query TTR
+SELECT model, case_id, delta FROM (
+  SELECT model, case_id,
+         abs(list_sum(embed(text))
+           - list_sum(list_transform(embed(text), lambda x: x))) AS delta
+  FROM golden
+  WHERE model = 'minilm' AND case_id IN ('empty', 'short_ascii', 'near_limit')
+) WHERE delta > 1e-4
+ORDER BY model, case_id;
+----
+
+
+# 2. embed_jina(): same write path, other entry point.
+#
+# generic_embed_invoke is shared, so this cannot fail alone -- it guards against
+# the two functions diverging later. Two cases only; Jina is the expensive model.
+query TR
+SELECT case_id, delta FROM (
+  SELECT case_id,
+         abs(list_sum(embed_jina(text))
+           - list_sum(list_transform(embed_jina(text), lambda x: x))) AS delta
+  FROM golden
+  WHERE model = 'jina' AND case_id IN ('empty', 'short_ascii')
+) WHERE delta > 1e-4
+ORDER BY case_id;
+----
+
+
+# 3. The crash form: a VARCHAR round trip.
+#
+# embed() is applied regardless of which model produced the fixture row, so the
+# width is always 384 and string_split on ',' must yield exactly that many parts.
+#
+# DELIBERATELY LAST IN THIS FILE. On the unfixed build this does not fail, it
+# kills the DuckDB process (SIGSEGV/SIGBUS), so anything placed after it would
+# never run and a real regression could hide behind the crash.
+query TTI
+SELECT model, case_id, parts FROM (
+  SELECT model, case_id, len(string_split(embed(text)::VARCHAR, ',')) AS parts
+  FROM golden
+  WHERE model = 'minilm' AND case_id IN ('empty', 'short_ascii', 'near_limit')
+) WHERE parts <> 384
+ORDER BY model, case_id;
+----
+
