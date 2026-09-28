@@ -2,6 +2,23 @@
 
 **Quackformers**, a DuckDB extension for LLM-related tasks. For embedding and RAG-like features on DuckDB:
 
+## What's new in 1.6.0-rc.1
+
+- **Two crashes fixed.** `embed(t)::VARCHAR` and `embed(NULL)` could kill the
+  DuckDB process ([#89](https://github.com/martin-conur/quackformers/issues/89),
+  [#35](https://github.com/martin-conur/quackformers/issues/35)).
+- **`LOAD` went from 167 s to 1.3 s**, and peak memory from ~3.2 GB to ~1.0 GB
+  ([#32](https://github.com/martin-conur/quackformers/issues/32)).
+- **`embed()` output changed.** MiniLM truncated at 128 tokens instead of 256,
+  so inputs over 128 tokens disagreed with other sentence-transformers users
+  ([#34](https://github.com/martin-conur/quackformers/issues/34)). **Re-embed
+  if you store vectors** — nothing errors, results just quietly get worse.
+  `embed_jina()` is unchanged in this release but will change in the next one
+  ([#33](https://github.com/martin-conur/quackformers/issues/33)).
+
+A supported build — the `-rc.1` means the 1.6.0 milestone is still in progress,
+not that this is a preview. Full history in [CHANGELOG.md](CHANGELOG.md).
+
 ```sql
 LOAD 'build/debug/quackformers.duckdb_extension'; -- IF BUILDING LOCALLY
 
@@ -52,10 +69,9 @@ duckdb -unsigned
 ```
 
 Features:
+- Available from the DuckDB community extensions repository
 - No DuckDB build required
-- No C++ or C code required
-- CI/CD chain preconfigured
-- (Coming soon) Works with community extensions
+- Written in Rust; no C or C++ in this repository
 
 ## Cloning
 
