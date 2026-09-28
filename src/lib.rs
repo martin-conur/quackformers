@@ -83,9 +83,8 @@ unsafe fn generic_embed_invoke(
     let embedded_phrases = guard.embed(texts, /*batch_size=*/ 32)?;
     let total_len: usize = embedded_phrases.iter().map(|v| v.len()).sum();
 
-    // reserving first
+    // child() panics if DuckDB rejects the reserve, so reserving first to turn it into a '?'
     output_list_vector.try_reserve(total_len)?;
-    // then taking that capacity (just in case)
     let mut child_vector = output_list_vector.child(total_len);
 
     // put the not null rows in the output vector with the right entry index (what we tracked in texts and rows)
@@ -108,7 +107,8 @@ unsafe fn generic_embed_invoke(
             output_list_vector.set_null(row);
         }
     }
-    // the argument sizes the the child not the rows
+    //#89 changes input.len() for total_len, this forwards to duckdb_list_vector_size,
+    // which sizes the child vector, not the row count
     output_list_vector.try_set_len(total_len)?;
 
     Ok(())
