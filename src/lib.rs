@@ -82,7 +82,14 @@ unsafe fn generic_embed_invoke(
     // now we have a `&mut TextEmbedder`
     let embedded_phrases = guard.embed(texts, /*batch_size=*/ 32)?;
     let total_len: usize = embedded_phrases.iter().map(|v| v.len()).sum();
-    let mut child_vector = output_list_vector.child(total_len);
+    let mut child_vector;
+
+    if output_list_vector.try_reserve(total_len)? == () {
+        child_vector = output_list_vector.child(total_len)
+    } else {
+        panic!("Failed to allocate memory");
+    }
+    //    let mut child_vector = output_list_vector.try_reserve(total_len).child(total_len);
 
     // put the not null rows in the output vector with the right entry index (what we tracked in texts and rows)
     let mut offset = 0;
@@ -105,7 +112,7 @@ unsafe fn generic_embed_invoke(
         }
     }
 
-    output_list_vector.set_len(input.len());
+    output_list_vector.try_set_len(total_len)?;
 
     Ok(())
 }
