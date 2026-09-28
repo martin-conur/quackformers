@@ -44,7 +44,17 @@ from sentence_transformers import SentenceTransformer
 
 OUT = pathlib.Path(__file__).resolve().parent.parent / "test" / "golden" / "golden_vectors.csv"
 
-# (fixture name, HF model id, dims, max_length, trust_remote_code)
+# (fixture name, HF model id, revision, dims, max_length, trust_remote_code)
+#
+# revision pins the exact HuggingFace commit these reference vectors come from.
+# It MUST match get_model_revision() in src/embed_utils.rs -- that is the whole
+# point. The extension is pinned; if this script is not, regenerating after an
+# upstream republish silently moves the ground truth while the extension stays
+# put, and the golden suite goes red as though the extension had regressed
+# (issue #39).
+#
+# To refresh a model deliberately: update the SHA in BOTH places, regenerate,
+# and treat the fixture diff as a vector-change requiring a release note.
 #
 # max_length is pinned here rather than inherited, mirroring the rule the Rust
 # side must follow (see issue #34). The model files disagree about the limit:
@@ -56,8 +66,10 @@ OUT = pathlib.Path(__file__).resolve().parent.parent / "test" / "golden" / "gold
 #   jina    512 -- NOT its 8192 maximum: attention is O(L^2), so at seq_len
 #                  8180 the attention scores alone are 3.2 GB per layer
 MODELS = [
-    ("minilm", "sentence-transformers/all-MiniLM-L6-v2", 384, 256, False),
-    ("jina", "jinaai/jina-embeddings-v2-base-en", 768, 512, True),
+    ("minilm", "sentence-transformers/all-MiniLM-L6-v2",
+     "1110a243fdf4706b3f48f1d95db1a4f5529b4d41", 384, 256, False),
+    ("jina", "jinaai/jina-embeddings-v2-base-en",
+     "322d4d7e2f35e84137961a65af894fda0385eb7a", 768, 512, True),
 ]
 
 # Deterministic filler for the length-boundary cases. Never randomise: the
@@ -119,9 +131,10 @@ def build_cases(model, limit):
 
 def main():
     rows = []
-    for name, model_id, dims, limit, remote in MODELS:
+    for name, model_id, revision, dims, limit, remote in MODELS:
         print(f"\n=== {name}  ({model_id}) ===", file=sys.stderr)
-        model = SentenceTransformer(model_id, trust_remote_code=remote)
+        print(f"  revision       : {revision}", file=sys.stderr)
+        model = SentenceTransformer(model_id, revision=revision, trust_remote_code=remote)
 
         inherited = model.max_seq_length
         model.max_seq_length = limit
@@ -150,6 +163,7 @@ def main():
             rows.append({
                 "model": name,
                 "case_id": case_id,
+                "revision": revision,
                 "n_tokens": n_tok,
                 "text": text,
                 "vector": json.dumps([round(float(v), 8) for v in vec]),
@@ -157,7 +171,14 @@ def main():
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with OUT.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["model", "case_id", "n_tokens", "text", "vector"])
+        # `revision` is provenance, not test input. It records which upstream
+        # weights produced these vectors, so a fixture that was regenerated
+        # against a different revision than src/embed_utils.rs pins can be
+        # spotted in the diff rather than debugged as a phantom regression.
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=["model", "case_id", "revision", "n_tokens", "text", "vector"],
+        )
         writer.writeheader()
         writer.writerows(rows)
 

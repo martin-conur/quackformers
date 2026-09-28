@@ -50,6 +50,20 @@ impl ModelType {
         }
     }
 
+    /// Ping the exact HF commit each model's weights come from. As detault the 'Repo'
+    /// enum will resolve to main at download time.
+    ///
+    /// This MUST match the 'revision' entries in scripts/gen_golden_vectors.py
+    /// which generates the referenec vectors the golden suite compares against.
+    ///
+    /// To move a model update the SHA in both placecs and re-generate the fixture.
+    fn get_model_revision(&self) -> String {
+        match &self {
+            Self::Bert(_) => "1110a243fdf4706b3f48f1d95db1a4f5529b4d41".to_string(),
+            Self::Jina(_) => "322d4d7e2f35e84137961a65af894fda0385eb7a".to_string(),
+        }
+    }
+
     fn max_length(&self) -> usize {
         match &self {
             Self::Bert(_) => 256,
@@ -128,7 +142,7 @@ impl ModelType {
 
     fn load_from_hub(&self) -> Result<(PathBuf, PathBuf), EmbeddingError> {
         let model_id = self.get_model_id();
-        let repo = Repo::new(model_id, RepoType::Model);
+        let repo = Repo::with_revision(model_id, RepoType::Model, self.get_model_revision());
         let api = Api::new()?;
         let api = api.repo(repo);
         let tokenizer = api.get("tokenizer.json")?;
