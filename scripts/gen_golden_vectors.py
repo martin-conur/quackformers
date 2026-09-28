@@ -163,7 +163,6 @@ def main():
             rows.append({
                 "model": name,
                 "case_id": case_id,
-                "revision": revision,
                 "n_tokens": n_tok,
                 "text": text,
                 "vector": json.dumps([round(float(v), 8) for v in vec]),
@@ -171,14 +170,7 @@ def main():
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with OUT.open("w", newline="", encoding="utf-8") as fh:
-        # `revision` is provenance, not test input. It records which upstream
-        # weights produced these vectors, so a fixture that was regenerated
-        # against a different revision than src/embed_utils.rs pins can be
-        # spotted in the diff rather than debugged as a phantom regression.
-        writer = csv.DictWriter(
-            fh,
-            fieldnames=["model", "case_id", "revision", "n_tokens", "text", "vector"],
-        )
+        writer = csv.DictWriter(fh, fieldnames=["model", "case_id", "n_tokens", "text", "vector"])
         writer.writeheader()
         writer.writerows(rows)
 
