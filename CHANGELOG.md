@@ -63,6 +63,29 @@ Built against **DuckDB v1.5.5**.
   Embedding output is unchanged — verified against the reference
   implementation.
 
+- **Embedding calls now run concurrently.** A process-wide mutex serialised
+  every call to `embed()` and `embed_jina()`, so DuckDB's thread pool could
+  only ever run one forward pass at a time. Measured on a 12-core machine over
+  a 320-row multi-file scan:
+
+  | `SET threads` | wall clock | speedup |
+  |---|---|---|
+  | 1 | 16.48 s | 1.0× |
+  | 2 | 8.31 s | 2.0× |
+  | 4 | 5.55 s | 3.0× |
+  | 8 | 5.01 s | 3.3× |
+
+  Concurrency is deliberately capped at `cores / 2`, maximum 4. Activation
+  memory scales with the number of simultaneous forward passes — roughly
+  400 MB per in-flight batch of 32 rows at 512 tokens — so an uncapped version
+  could turn a query that used to be slow into one that exhausts memory. The
+  plateau between 4 and 8 threads above is that cap working as intended.
+
+  Output is unaffected by thread count: the checksum over all 320 rows is
+  identical at every setting above.
+  ([#37](https://github.com/martin-conur/quackformers/issues/37), thanks to
+  [@mikemikimike](https://github.com/mikemikimike))
+
 ### Added
 
 - A golden-vector regression suite that asserts embedding **values** against
